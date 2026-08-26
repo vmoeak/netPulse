@@ -58,7 +58,7 @@ open NetPulse.app
 
 ## Known rough edges / things to check on a real Mac
 
-- `NettopSampler`'s text parser is the least-verified part of this project
+- `NettopSampler`'s text parser was the least-verified part of this project
   (see the comment at the top of `Monitoring/NettopSampler.swift`) — it was
   written against documented `nettop` behavior, not tested against live
   output. The sidebar status distinguishes the failure modes: nettop exiting

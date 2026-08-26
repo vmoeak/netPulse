@@ -4,10 +4,16 @@ import Foundation
 /// tool (no special entitlement needed, unlike the Network Extension APIs
 /// that would give the mockup's precision).
 ///
-/// NOTE ON FORMAT ASSUMPTIONS: `nettop`'s row layout varies between macOS
-/// versions, so `parse(line:)` scans a row's comma-separated cells for the
-/// `"ProcessName.PID"` one rather than assuming it comes first, and reads
-/// the last two numeric cells as cumulative bytes-in/bytes-out.
+/// ROW FORMAT: `nettop -x` writes whitespace-aligned columns, not CSV —
+///
+///     mDNSResponder.595                       9087000          372112
+///
+/// with the process name truncated to 15 characters (which only affects
+/// daemons; GUI apps are renamed from their pid via `ProcessDirectory`).
+/// `parse(line:)` scans a row's cells for the `"ProcessName.PID"` one
+/// rather than assuming a position, and reads the last two numeric cells as
+/// cumulative bytes-in/bytes-out. `-x` keeps those unabbreviated, so there
+/// are no K/M suffixes to interpret.
 ///
 /// When nothing parses, the status message says which of the two failure
 /// modes happened — nettop produced no output at all, or it produced output
@@ -157,7 +163,12 @@ final class NettopSampler {
         if firstLines.count < 3 { firstLines.append(String(raw.prefix(120))) }
         lock.unlock()
 
-        let fields = raw.components(separatedBy: ",")
+        // Whitespace is the real separator; the comma path is kept because
+        // nettop's own logging mode does emit CSV in some invocations, and
+        // splitting on the wrong one silently yields a single unparsable cell.
+        let fields: [String] = raw.contains(",")
+            ? raw.components(separatedBy: ",")
+            : raw.split(whereSeparator: \.isWhitespace).map(String.init)
         guard let (command, pid) = Self.processCell(in: fields) else { return }
 
         let numericFields = fields.compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
