@@ -21,10 +21,10 @@ struct AppListView: View {
                 .padding(.vertical, 4)
             }
         }
-        // Was a hard 472. The column widths below need ~390, so let the pane
-        // flex between that and its design width instead of forcing the window
-        // wider than the screen.
-        .frame(minWidth: 392, idealWidth: 472, maxWidth: 560)
+        // Was a hard 472; flexes now so the window can narrow (see PaneWidth).
+        .frame(minWidth: PaneWidth.listMin,
+               idealWidth: PaneWidth.listIdeal,
+               maxWidth: PaneWidth.listMax)
         .background(Theme.paneBackground)
         .overlay(Rectangle().fill(Theme.hairline).frame(width: 0.5), alignment: .trailing)
     }

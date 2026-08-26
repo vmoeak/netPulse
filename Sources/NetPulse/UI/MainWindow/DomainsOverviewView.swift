@@ -31,7 +31,7 @@ struct DomainsOverviewView: View {
                 }
             }
         }
-        .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
+        .frame(minWidth: PaneWidth.detailMin, maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.white)
     }
 

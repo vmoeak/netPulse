@@ -25,9 +25,9 @@ struct AppDetailView: View {
                 }
             }
         }
-        // 460 is what the domain table's fixed columns plus their padding
-        // actually occupy; below it the right-hand columns get cut off.
-        .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
+        // PaneWidth.detailMin is what the domain table's fixed columns plus
+        // their padding occupy; below it the right-hand columns get cut off.
+        .frame(minWidth: PaneWidth.detailMin, maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.white)
     }
 
@@ -126,10 +126,10 @@ struct AppDetailView: View {
 
             HStack {
                 Text("域名").frame(maxWidth: .infinity, alignment: .leading)
-                Text("实时").frame(width: 120, alignment: .trailing)
-                Text("累计下载").frame(width: 110, alignment: .trailing)
-                Text("累计上传").frame(width: 100, alignment: .trailing)
-                Text("连接").frame(width: 64, alignment: .trailing)
+                Text("实时").frame(width: 100, alignment: .trailing)
+                Text("累计下载").frame(width: 96, alignment: .trailing)
+                Text("累计上传").frame(width: 92, alignment: .trailing)
+                Text("连接").frame(width: 52, alignment: .trailing)
             }
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(Theme.textTertiary)
@@ -179,16 +179,16 @@ private struct DomainRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text("↓ \(Format.rate(domain.rateDownKBps))")
-                .frame(width: 120, alignment: .trailing)
+                .frame(width: 100, alignment: .trailing)
                 .foregroundStyle(Color(hex: 0x4A4A4F))
             Text(Format.size(domain.totalDownKB))
-                .frame(width: 110, alignment: .trailing)
+                .frame(width: 96, alignment: .trailing)
                 .foregroundStyle(Theme.textPrimary)
             Text(Format.size(domain.totalUpKB))
-                .frame(width: 100, alignment: .trailing)
+                .frame(width: 92, alignment: .trailing)
                 .foregroundStyle(Theme.textSecondary)
             Text("\(domain.connectionCount)")
-                .frame(width: 64, alignment: .trailing)
+                .frame(width: 52, alignment: .trailing)
                 .foregroundStyle(Theme.textSecondary)
         }
         .font(.system(size: 11.5))
