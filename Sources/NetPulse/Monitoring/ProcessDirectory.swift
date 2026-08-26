@@ -7,12 +7,12 @@ import Darwin
 /// their executable name, keyed so relaunches under a new pid still
 /// aggregate into the same row.
 ///
-/// Browsers and Electron apps do their networking in helper processes that
-/// are not themselves registered applications — Chrome's own window process
-/// holds barely a socket, so reporting it verbatim shows Chrome at zero
-/// while its traffic sits under a truncated "Google Chrome H" row (or under
-/// no row the user recognizes). Those helpers are folded into the app that
-/// owns them, which is what `owningApplication(of:)` below is for.
+/// Browsers and Electron apps do their networking in helper processes —
+/// Chrome's own window process holds barely a socket, and on a live Mac
+/// nettop reports its traffic entirely under `Google Chrome H.<pid>`. Taken
+/// verbatim that shows Chrome at zero while the bytes sit under a truncated
+/// row nobody recognizes, so `owningApplication(of:)` folds a helper into
+/// the app that owns it.
 enum ProcessDirectory {
     struct Identity {
         let id: String
@@ -22,11 +22,17 @@ enum ProcessDirectory {
     }
 
     static func identify(pid: Int32, fallbackCommand: String) -> Identity {
-        if let app = NSRunningApplication(processIdentifier: pid) {
-            return identity(for: app, statusHint: "运行中")
-        }
+        // The owning app is asked about first on purpose. Chrome's helpers are
+        // themselves .app bundles with their own bundle ID, so asking about
+        // the pid directly resolves to "Google Chrome Helper" and would never
+        // reach Chrome. A top-level app has no ancestor holding its
+        // executable (its parent is launchd), so it still identifies as
+        // itself.
         if let owner = owningApplication(of: pid) {
             return identity(for: owner, statusHint: "运行中")
+        }
+        if let app = NSRunningApplication(processIdentifier: pid) {
+            return identity(for: app, statusHint: "运行中")
         }
         let cleaned = fallbackCommand.isEmpty ? "pid-\(pid)" : fallbackCommand
         let key = "proc." + cleaned
