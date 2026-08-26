@@ -163,22 +163,48 @@ final class NettopSampler {
         if firstLines.count < 3 { firstLines.append(String(raw.prefix(120))) }
         lock.unlock()
 
-        // Whitespace is the real separator; the comma path is kept because
-        // nettop's own logging mode does emit CSV in some invocations, and
-        // splitting on the wrong one silently yields a single unparsable cell.
-        let fields: [String] = raw.contains(",")
-            ? raw.components(separatedBy: ",")
-            : raw.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard let (command, pid) = Self.processCell(in: fields) else { return }
-
-        let numericFields = fields.compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-        guard numericFields.count >= 2 else { return }
-        let bytesIn = numericFields[numericFields.count - 2]
-        let bytesOut = numericFields[numericFields.count - 1]
+        guard let row = Self.parseRow(raw) else { return }
 
         lock.lock()
-        latest[pid] = Sample(pid: pid, command: command, bytesInCumKB: bytesIn / 1024, bytesOutCumKB: bytesOut / 1024)
+        latest[row.pid] = Sample(pid: row.pid,
+                                 command: row.command,
+                                 bytesInCumKB: row.bytesIn / 1024,
+                                 bytesOutCumKB: row.bytesOut / 1024)
         lock.unlock()
+    }
+
+    private struct Row {
+        let command: String
+        let pid: Int32
+        let bytesIn: Double
+        let bytesOut: Double
+    }
+
+    /// Whitespace is the real separator; the comma path is kept because
+    /// nettop's logging mode does emit CSV in some invocations, and splitting
+    /// on the wrong one silently yields a single unparsable cell.
+    private static func parseRow(_ raw: String) -> Row? {
+        if raw.contains(",") {
+            let fields = raw.components(separatedBy: ",")
+            guard let (command, pid) = processCell(in: fields) else { return nil }
+            let numbers = fields.compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            guard numbers.count >= 2 else { return nil }
+            return Row(command: command, pid: pid,
+                       bytesIn: numbers[numbers.count - 2],
+                       bytesOut: numbers[numbers.count - 1])
+        }
+
+        // In the whitespace layout the last two cells are the counters and
+        // *everything* before them is the name cell — process names contain
+        // spaces ("Google Chrome H.1836"), so scanning token by token would
+        // match only the trailing "H.1836" and label the row "H".
+        let tokens = raw.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard tokens.count >= 3,
+              let bytesOut = Double(tokens[tokens.count - 1]),
+              let bytesIn = Double(tokens[tokens.count - 2]) else { return nil }
+        let nameCell = tokens[0..<(tokens.count - 2)].joined(separator: " ")
+        guard let (command, pid) = processCell(in: [nameCell]) else { return nil }
+        return Row(command: command, pid: pid, bytesIn: bytesIn, bytesOut: bytesOut)
     }
 
     /// Finds the `"ProcessName.PID"` cell in a row. Some macOS versions put it
