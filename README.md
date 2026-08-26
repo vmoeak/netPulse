@@ -25,6 +25,28 @@ in the original handoff for the design conversation).
 - **导出报告**: exports the selected app's current domain breakdown as CSV
   via a save panel.
 
+## 深度模式 (opt-in)
+
+Everything above *estimates* which host an app's bytes went to, and behind a
+local proxy it cannot even do that — every socket points at 127.0.0.1.
+
+深度模式 runs a local HTTP proxy (`ProxyRelay`, port 1083) that forwards to
+the proxy already configured in System Settings. A client announces its
+destination in cleartext before any TLS handshake (`CONNECT host:443`, or an
+absolute-URI request line), so the host, the process behind it and the byte
+counts all become measured rather than inferred. Nothing is decrypted: after
+the request head the two sockets are pumped into each other verbatim.
+
+Turning it on starts the relay and prints where to point the system proxy —
+NetPulse does not change that setting itself. The reason for both the opt-in
+and the manual step is that the relay is in the data path: while the system
+proxy points at it, traffic stops if NetPulse stops. Turn the switch off
+before quitting.
+
+Only apps that honour the system proxy are covered; tunnelled (utun) traffic
+and SOCKS clients keep the estimate. NetPulse excludes its own process from
+the app list, since in this mode its bytes are other apps' traffic.
+
 ## Building
 
 Requires Xcode 15+ / macOS 13+ SDK.
