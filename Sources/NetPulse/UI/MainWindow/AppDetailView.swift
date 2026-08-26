@@ -25,7 +25,9 @@ struct AppDetailView: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // 460 is what the domain table's fixed columns plus their padding
+        // actually occupy; below it the right-hand columns get cut off.
+        .frame(minWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.white)
     }
 

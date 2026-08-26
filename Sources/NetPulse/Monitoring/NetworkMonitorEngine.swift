@@ -10,6 +10,7 @@ final class NetworkMonitorEngine: ObservableObject {
     @Published var selectedAppID: String?
     @Published var sortMode: SortMode = .rate { didSet { resort() } }
     @Published var range: TimeRange = .today { didSet { resort() } }
+    @Published var section: SidebarSection = .apps
     @Published var popoverOpen: Bool = true
     @Published var searchText: String = ""
     @Published private(set) var status: MonitoringStatus = .starting
@@ -97,6 +98,50 @@ final class NetworkMonitorEngine: ObservableObject {
     var popoverList: [AppUsage] {
         let sorted = apps.sorted { ($0.rateDownKBps + $0.rateUpKBps) > ($1.rateDownKBps + $1.rateUpKBps) }
         return Array(sorted.dropFirst().prefix(4))
+    }
+
+    /// 活跃连接: every app's hosts flattened into one machine-wide list,
+    /// busiest first.
+    var connectionRows: [ConnectionRow] {
+        apps.flatMap { app in
+            app.domains.map { domain in
+                ConnectionRow(appID: app.id,
+                              appName: app.name,
+                              badge: app.badge,
+                              host: domain.host,
+                              kind: domain.kind,
+                              rateDownKBps: domain.rateDownKBps,
+                              connectionCount: domain.connectionCount)
+            }
+        }
+        .sorted { ($0.rateDownKBps, $0.connectionCount) > ($1.rateDownKBps, $1.connectionCount) }
+    }
+
+    /// 域名总览: the same hosts keyed by host rather than by app, so a CDN
+    /// several apps share reads as one row carrying their combined traffic.
+    var domainRollups: [DomainRollup] {
+        var byHost: [String: DomainRollup] = [:]
+        for app in apps {
+            for domain in app.domains {
+                if var rollup = byHost[domain.host] {
+                    rollup.rateDownKBps += domain.rateDownKBps
+                    rollup.totalDownKB += domain.totalDownKB
+                    rollup.totalUpKB += domain.totalUpKB
+                    rollup.connectionCount += domain.connectionCount
+                    if !rollup.appNames.contains(app.name) { rollup.appNames.append(app.name) }
+                    byHost[domain.host] = rollup
+                } else {
+                    byHost[domain.host] = DomainRollup(host: domain.host,
+                                                       kind: domain.kind,
+                                                       rateDownKBps: domain.rateDownKBps,
+                                                       totalDownKB: domain.totalDownKB,
+                                                       totalUpKB: domain.totalUpKB,
+                                                       connectionCount: domain.connectionCount,
+                                                       appNames: [app.name])
+                }
+            }
+        }
+        return byHost.values.sorted { ($0.totalDownKB, $0.rateDownKBps) > ($1.totalDownKB, $1.rateDownKBps) }
     }
 
     var totalDownKBps: Double { apps.reduce(0) { $0 + $1.rateDownKBps } }
