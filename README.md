@@ -10,7 +10,11 @@ in the original handoff for the design conversation).
 - **Week/month/all-time rollups**: real, persisted to
   `~/Library/Application Support/NetPulse/history.json` day-by-day.
 - **Domain / host breakdown**: connections are real (via `lsof -i`, reverse-
-  DNS resolved and cached). Per-domain **byte counts are an estimate** —
+  DNS resolved and cached). On a Mac running a local proxy most of a
+  browser's sockets terminate at 127.0.0.1 and the real destination is known
+  only to the proxy, so those rows are labelled with the process holding the
+  listening port ("本机 · Shadowrocket") instead of an anonymous "localhost";
+  the destinations themselves show up under the proxy's own row. Per-domain **byte counts are an estimate** —
   macOS doesn't expose per-connection throughput without the Network
   Extension entitlement (which requires Apple approval), so an app's
   measured rate is split across its currently-open remote hosts weighted by

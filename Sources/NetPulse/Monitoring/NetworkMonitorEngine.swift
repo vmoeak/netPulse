@@ -26,6 +26,8 @@ final class NetworkMonitorEngine: ObservableObject {
     private var appIdentity: [Int32: ProcessDirectory.Identity] = [:]
     /// Latest per-pid connection info, refreshed every few seconds.
     private var latestConnections: [Int32: ConnectionInfo] = [:]
+    /// Who is listening on which port, so a loopback peer can be named.
+    private var latestListeners: [Int: ListenerInfo] = [:]
     /// Resolved hostnames for remote IPs seen so far.
     private var resolvedHosts: [String: String] = [:]
 
@@ -42,8 +44,8 @@ final class NetworkMonitorEngine: ObservableObject {
         nettop.onStatusChange = { [weak self] newStatus in
             Task { @MainActor in self?.status = newStatus }
         }
-        connections.onSample = { [weak self] infos in
-            Task { @MainActor in self?.ingestConnections(infos) }
+        connections.onSample = { [weak self] snapshot in
+            Task { @MainActor in self?.ingestConnections(snapshot) }
         }
         connections.onStatusChange = { [weak self] newStatus in
             Task { @MainActor in
@@ -152,8 +154,13 @@ final class NetworkMonitorEngine: ObservableObject {
 
     // MARK: - Sampling
 
-    private func ingestConnections(_ infos: [ConnectionInfo]) {
+    private func ingestConnections(_ snapshot: ConnectionSnapshot) {
+        let infos = snapshot.connections
         for info in infos { latestConnections[info.pid] = info }
+        latestListeners = snapshot.listeners
+        // Loopback peers are deliberately not resolved: reverse DNS answers
+        // "localhost" for all of them, which is exactly the useless label the
+        // listener lookup exists to replace.
         let seenIPs = Set(infos.flatMap { Array($0.remoteCounts.keys) })
         let unresolved = seenIPs.subtracting(resolvedHosts.keys)
         guard !unresolved.isEmpty else { return }
@@ -240,28 +247,45 @@ final class NetworkMonitorEngine: ObservableObject {
         usage.upHistory = Array((usage.upHistory + [agg.upKBps]).suffix(60))
 
         var hostConnCounts: [String: Int] = [:]
+        var loopbackConnCounts: [Int: Int] = [:]
         for pid in agg.pids {
             guard let info = latestConnections[pid] else { continue }
             for (ip, count) in info.remoteCounts {
                 hostConnCounts[ip, default: 0] += count
             }
+            for (port, count) in info.loopbackCounts {
+                loopbackConnCounts[port, default: 0] += count
+            }
         }
         usage.connectionCount = hostConnCounts.values.reduce(0, +)
+            + loopbackConnCounts.values.reduce(0, +)
         let totalConns = max(1, usage.connectionCount)
         let previousDomains = usage.domains
-        usage.domains = hostConnCounts.map { ip, count -> DomainUsage in
-            let host = resolvedHosts[ip] ?? ip
+
+        func domain(host: String, kind: String, count: Int) -> DomainUsage {
             let share = Double(count) / Double(totalConns)
             let existing = previousDomains.first(where: { $0.host == host })
             return DomainUsage(
                 host: host,
-                kind: host == ip ? "IP 地址" : "已解析主机",
+                kind: kind,
                 rateDownKBps: agg.downKBps * share,
                 totalDownKB: (existing?.totalDownKB ?? 0) + agg.downKBps * share,
                 totalUpKB: (existing?.totalUpKB ?? 0) + agg.upKBps * share,
                 connectionCount: count
             )
-        }.sorted { $0.connectionCount > $1.connectionCount }
+        }
+
+        let remoteDomains = hostConnCounts.map { ip, count -> DomainUsage in
+            let host = resolvedHosts[ip] ?? ip
+            return domain(host: host, kind: host == ip ? "IP 地址" : "已解析主机", count: count)
+        }
+        // A machine running a local proxy sends most of a browser's sockets to
+        // 127.0.0.1, where the destination is known only to the proxy. Naming
+        // the process on the other end at least says which one is carrying it.
+        let loopbackDomains = loopbackConnCounts.map { port, count -> DomainUsage in
+            domain(host: "localhost:\(port)", kind: loopbackPeerLabel(port: port), count: count)
+        }
+        usage.domains = (remoteDomains + loopbackDomains).sorted { $0.connectionCount > $1.connectionCount }
 
         for r in TimeRange.allCases {
             let rolled = history.rollup(appID: id, range: r)
@@ -269,6 +293,12 @@ final class NetworkMonitorEngine: ObservableObject {
             usage.totalUpKB[r] = rolled.upKB
         }
         return usage
+    }
+
+    private func loopbackPeerLabel(port: Int) -> String {
+        guard let listener = latestListeners[port] else { return "本机进程" }
+        let name = ProcessDirectory.identify(pid: listener.pid, fallbackCommand: listener.command).name
+        return "本机 · \(name)"
     }
 
     private func resort() {
