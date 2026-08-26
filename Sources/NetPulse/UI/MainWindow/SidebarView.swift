@@ -43,8 +43,6 @@ struct SidebarView: View {
 
             Spacer(minLength: 0)
 
-            deepModeBox
-
             VStack(alignment: .leading, spacing: 10) {
                 totalsRow(label: "下载", value: Format.rate(engine.totalDownKBps), valueColor: Theme.accentBlue, barColor: Theme.accentBlue, trackColor: Theme.accentBlue.opacity(0.16), fraction: engine.totalDownPct)
                 totalsRow(label: "上传", value: Format.rate(engine.totalUpKBps), valueColor: Theme.upOrangeTextAlt, barColor: Theme.upOrange, trackColor: Theme.upOrange.opacity(0.16), fraction: engine.totalUpPct)
@@ -56,39 +54,6 @@ struct SidebarView: View {
         .frame(width: 216)
         .background(Theme.sidebarBackground)
         .overlay(Rectangle().fill(Theme.hairline).frame(width: 0.5), alignment: .trailing)
-    }
-
-    /// 深度模式 puts NetPulse in the data path, so the switch says what it
-    /// does and the hint below carries the one manual step (pointing the
-    /// system proxy here) rather than the app changing it behind the user.
-    private var deepModeBox: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle(isOn: Binding(get: { engine.deepModeEnabled },
-                                 set: { engine.setDeepMode($0) })) {
-                Text("深度模式")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-            }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-
-            Text(engine.deepModeEnabled
-                 ? engine.deepModeHint
-                 : "开启后由 NetPulse 中转代理流量，域名与字节数从估算变为实测。")
-                .font(.system(size: 10))
-                .foregroundStyle(engine.deepModeEnabled ? Theme.accentBlue : Theme.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if engine.deepModeEnabled {
-                Text("关闭 NetPulse 前请先关掉此模式，否则代理指向会失效。")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .overlay(Rectangle().fill(Theme.hairline).frame(height: 0.5), alignment: .top)
     }
 
     private func badgeCount(for section: SidebarSection) -> String {

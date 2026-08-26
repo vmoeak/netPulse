@@ -11,19 +11,12 @@ final class NetworkMonitorEngine: ObservableObject {
     @Published var sortMode: SortMode = .rate { didSet { resort() } }
     @Published var range: TimeRange = .today { didSet { resort() } }
     @Published var section: SidebarSection = .apps
-    /// 深度模式: relay the proxied traffic so destinations are measured
-    /// rather than estimated. Off by default — it puts NetPulse in the data
-    /// path (see ProxyRelay).
-    @Published private(set) var deepModeEnabled = false
-    @Published private(set) var deepModeHint: String = ""
-    let relayPort: UInt16 = 1083
     @Published var popoverOpen: Bool = true
     @Published var searchText: String = ""
     @Published private(set) var status: MonitoringStatus = .starting
 
     private let nettop = NettopSampler()
     private let connections = ConnectionSampler()
-    private let relay = ProxyRelay()
     private let dns = ReverseDNSResolver()
     private let history = HistoryStore()
 
@@ -35,27 +28,11 @@ final class NetworkMonitorEngine: ObservableObject {
     private var latestConnections: [Int32: ConnectionInfo] = [:]
     /// Who is listening on which port, so a loopback peer can be named.
     private var latestListeners: [Int: ListenerInfo] = [:]
-    /// Exact per-host totals measured by the relay, appID -> host. Present
-    /// only for apps whose traffic went through it while 深度模式 was on.
-    private var proxyHosts: [String: [String: HostTotals]] = [:]
-
-    private struct HostTotals {
-        var downKB: Double = 0
-        var upKB: Double = 0
-        var rateDownKBps: Double = 0
-        var rateUpKBps: Double = 0
-        var connections: Int = 0
-    }
     /// Resolved hostnames for remote IPs seen so far.
     private var resolvedHosts: [String: String] = [:]
 
     private var tickTimer: Timer?
     private var hasStarted = false
-    /// NetPulse's own row is skipped. In 深度模式 most of its bytes are other
-    /// apps' traffic passing through the relay, so counting them here would
-    /// report every proxied app twice.
-    private let ownPID = ProcessInfo.processInfo.processIdentifier
-    private let ownBundleID = Bundle.main.bundleIdentifier
 
     /// Idempotent — safe to call from multiple view lifecycle hooks (the
     /// menu bar label appears at launch; the main window may appear later
@@ -93,68 +70,7 @@ final class NetworkMonitorEngine: ObservableObject {
         tickTimer = nil
         nettop.stop()
         connections.stop()
-        setDeepMode(false)
         history.saveIfDirty()
-    }
-
-    // MARK: - 深度模式
-
-    /// Starts the relay and tells the user where to point the system proxy.
-    /// The upstream is read *before* the switch, so it is the user's real
-    /// proxy rather than this relay — pointing the relay at itself would
-    /// loop, and the guard below refuses that case outright.
-    func setDeepMode(_ enabled: Bool) {
-        guard enabled != deepModeEnabled else { return }
-        guard enabled else {
-            relay.stop()
-            deepModeEnabled = false
-            deepModeHint = ""
-            return
-        }
-        guard let upstream = SystemProxy.current() else {
-            deepModeHint = "未检测到系统 HTTP 代理，深度模式无处转发。"
-            return
-        }
-        guard upstream.port != relayPort else {
-            deepModeHint = "系统代理已指向 \(relayPort)，请先改回你的代理端口再开启。"
-            return
-        }
-        relay.onFlowUpdate = { [weak self] deltas in
-            Task { @MainActor in self?.ingestProxyFlows(deltas) }
-        }
-        relay.onStatusChange = { [weak self] newStatus in
-            Task { @MainActor in
-                if case .unavailable(let message) = newStatus {
-                    self?.deepModeHint = message
-                    self?.setDeepMode(false)
-                }
-            }
-        }
-        relay.start(config: ProxyRelay.Config(listenPort: relayPort,
-                                              upstreamHost: upstream.host,
-                                              upstreamPort: upstream.port))
-        deepModeEnabled = true
-        deepModeHint = "把系统代理改为 127.0.0.1:\(relayPort)（上游 \(upstream.description)）"
-    }
-
-    private func ingestProxyFlows(_ deltas: [ProxyFlowDelta]) {
-        for delta in deltas {
-            let identity = appIdentity[delta.pid] ?? {
-                let resolved = ProcessDirectory.identify(pid: delta.pid, fallbackCommand: "pid-\(delta.pid)")
-                appIdentity[delta.pid] = resolved
-                return resolved
-            }()
-            var hosts = proxyHosts[identity.id] ?? [:]
-            var totals = hosts[delta.host] ?? HostTotals()
-            totals.downKB += delta.downKB
-            totals.upKB += delta.upKB
-            // One flush per second, so a KB in this batch is also KB/s.
-            totals.rateDownKBps = delta.downKB
-            totals.rateUpKBps = delta.upKB
-            totals.connections += delta.newConnections
-            hosts[delta.host] = totals
-            proxyHosts[identity.id] = hosts
-        }
     }
 
     func select(appID: String) { selectedAppID = appID }
@@ -268,14 +184,12 @@ final class NetworkMonitorEngine: ObservableObject {
         var aggregates: [String: Aggregate] = [:]
 
         for (pid, sample) in samples {
-            guard pid != ownPID else { continue }
             let identity = appIdentity[pid] ?? {
                 let resolved = ProcessDirectory.identify(pid: pid, fallbackCommand: sample.command)
                 appIdentity[pid] = resolved
                 return resolved
             }()
             guard !pausedIDs.contains(identity.id) else { continue }
-            if let ownBundleID, identity.bundleID == ownBundleID { continue }
 
             let prev = previousSamples[pid]
             let downDeltaKB = max(0, sample.bytesInCumKB - (prev?.bytesInCumKB ?? sample.bytesInCumKB))
@@ -365,28 +279,13 @@ final class NetworkMonitorEngine: ObservableObject {
             let host = resolvedHosts[ip] ?? ip
             return domain(host: host, kind: host == ip ? "IP 地址" : "已解析主机", count: count)
         }
-        // 深度模式 measured this app's proxied traffic outright, so those rows
-        // replace the loopback ones — they are the same bytes, counted rather
-        // than split across sockets by connection count.
-        let measuredDomains = (proxyHosts[id] ?? [:]).map { host, totals -> DomainUsage in
-            DomainUsage(host: host,
-                        kind: "代理 · 精确",
-                        rateDownKBps: totals.rateDownKBps,
-                        totalDownKB: totals.downKB,
-                        totalUpKB: totals.upKB,
-                        connectionCount: totals.connections)
+        // A machine running a local proxy sends most of a browser's sockets to
+        // 127.0.0.1, where the destination is known only to the proxy. Naming
+        // the process on the other end at least says which one is carrying it.
+        let loopbackDomains = loopbackConnCounts.map { port, count -> DomainUsage in
+            domain(host: "localhost:\(port)", kind: loopbackPeerLabel(port: port), count: count)
         }
-        // Without it, a machine running a local proxy sends most of a
-        // browser's sockets to 127.0.0.1, where the destination is known only
-        // to the proxy. Naming the process on the other end at least says
-        // which one is carrying them.
-        let loopbackDomains = measuredDomains.isEmpty
-            ? loopbackConnCounts.map { port, count -> DomainUsage in
-                domain(host: "localhost:\(port)", kind: loopbackPeerLabel(port: port), count: count)
-            }
-            : []
-        usage.domains = (remoteDomains + measuredDomains + loopbackDomains)
-            .sorted { $0.connectionCount > $1.connectionCount }
+        usage.domains = (remoteDomains + loopbackDomains).sorted { $0.connectionCount > $1.connectionCount }
 
         for r in TimeRange.allCases {
             let rolled = history.rollup(appID: id, range: r)
