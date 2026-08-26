@@ -27,9 +27,18 @@ jobs:
           chmod +x scripts/build-app.sh
           scripts/build-app.sh release
 
+      # upload-artifact rewrites every file to 644/755 and would take
+      # dist/NetPulse.app's *contents* as the archive root, so a downloaded
+      # bundle loses its executable bit and its .app wrapper. Zipping with
+      # ditto first keeps permissions, the wrapper and the code signature
+      # intact; the artifact is that zip (GitHub wraps it in one more zip).
+      - name: Zip the bundle
+        run: |
+          ditto -c -k --keepParent --sequesterRsrc dist/NetPulse.app dist/NetPulse.zip
+
       - name: Upload NetPulse.app
         uses: actions/upload-artifact@v4
         with:
           name: NetPulse-app
-          path: dist/NetPulse.app
+          path: dist/NetPulse.zip
           if-no-files-found: error

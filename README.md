@@ -45,6 +45,17 @@ local distribution works fine.
 on every push and uploads `NetPulse.app` as a build artifact — useful for
 catching compile errors even without a local Mac.
 
+The bundle is zipped with `ditto` before upload so it survives the trip
+with its permissions and ad-hoc signature intact. GitHub wraps artifacts in
+a zip of their own, so a downloaded `NetPulse-app.zip` unpacks to
+`NetPulse.zip`, which in turn unpacks to a double-clickable `NetPulse.app`:
+
+```sh
+cd ~/Downloads && unzip NetPulse-app.zip && unzip NetPulse.zip
+xattr -dr com.apple.quarantine NetPulse.app   # ad-hoc signed, not notarized
+open NetPulse.app
+```
+
 ## Known rough edges / things to check on a real Mac
 
 - `NettopSampler`'s text parser is the least-verified part of this project
