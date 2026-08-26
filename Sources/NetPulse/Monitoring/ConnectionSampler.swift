@@ -8,6 +8,13 @@ struct ConnectionInfo {
     let remoteCounts: [String: Int]
 }
 
+/// `Result`'s failure type has to conform to `Error`, so the human-readable
+/// message this sampler surfaces to the UI is wrapped instead of being passed
+/// around as a bare `String`.
+struct SamplerError: Error {
+    let message: String
+}
+
 /// Polls `lsof -i` periodically to discover which remote hosts each process
 /// is talking to right now. This has no byte-count information — only
 /// connection presence/count — so it's paired with `NettopSampler`'s
@@ -43,13 +50,13 @@ final class ConnectionSampler {
             switch Self.runLsof() {
             case .success(let infos):
                 DispatchQueue.main.async { self.onSample?(infos) }
-            case .failure(let message):
-                DispatchQueue.main.async { self.onStatusChange?(.degraded(message)) }
+            case .failure(let error):
+                DispatchQueue.main.async { self.onStatusChange?(.degraded(error.message)) }
             }
         }
     }
 
-    private static func runLsof() -> Result<[ConnectionInfo], String> {
+    private static func runLsof() -> Result<[ConnectionInfo], SamplerError> {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         // -F pcfn: lsof's machine-readable "field output" mode (documented,
@@ -67,12 +74,12 @@ final class ConnectionSampler {
         do {
             try p.run()
         } catch {
-            return .failure("无法启动 lsof：\(error.localizedDescription)")
+            return .failure(SamplerError(message: "无法启动 lsof：\(error.localizedDescription)"))
         }
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         guard let text = String(data: data, encoding: .utf8) else {
-            return .failure("lsof 输出无法解码")
+            return .failure(SamplerError(message: "lsof 输出无法解码"))
         }
         return .success(parse(text))
     }

@@ -54,7 +54,11 @@ final class NetworkMonitorEngine: ObservableObject {
         nettop.start()
         connections.start()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+            // Timer's block is `@Sendable`, so the `weak self` capture reads as a
+            // mutable var there — binding it to an immutable `self` first is what
+            // lets the inner `Task` capture it.
+            guard let self else { return }
+            Task { @MainActor in self.tick() }
         }
     }
 

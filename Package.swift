@@ -8,6 +8,14 @@ let package = Package(
         .executableTarget(
             name: "NetPulse",
             path: "Sources/NetPulse",
+            // Not SPM resources: Info.plist is embedded via the linker flags
+            // below and both files are copied into the .app by
+            // scripts/build-app.sh. Listing them here just silences SPM's
+            // "unhandled files" warning.
+            exclude: [
+                "Resources/Info.plist",
+                "Resources/NetPulse.entitlements",
+            ],
             linkerSettings: [
                 // Embeds Info.plist into the __TEXT,__info_plist section so the SPM
                 // executable behaves like a real .app bundle at runtime (SwiftUI's
