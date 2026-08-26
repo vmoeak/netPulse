@@ -21,9 +21,24 @@ APP="dist/NetPulse.app"
 
 echo "==> assembling $APP"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/NetPulse"
 cp "Sources/NetPulse/Resources/Info.plist" "$APP/Contents/Info.plist"
+
+# .icns is generated rather than checked in, from the 1024pt master that
+# scripts/make-icon.py draws. Needs macOS (sips/iconutil), which is also the
+# only place this script runs.
+echo "==> generating NetPulse.icns"
+ICONSET="$(mktemp -d)/NetPulse.iconset"
+mkdir -p "$ICONSET"
+for spec in 16:16x16 32:16x16@2x 32:32x32 64:32x32@2x 128:128x128 \
+            256:128x128@2x 256:256x256 512:256x256@2x 512:512x512 1024:512x512@2x; do
+  px="${spec%%:*}"
+  name="${spec##*:}"
+  sips -z "$px" "$px" "Sources/NetPulse/Resources/AppIcon.png" \
+    --out "$ICONSET/icon_$name.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/NetPulse.icns"
 
 echo "==> ad-hoc codesigning with entitlements"
 codesign --force --deep --sign - \

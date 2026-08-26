@@ -68,4 +68,8 @@ open NetPulse.app
   bytes_in,bytes_out` in Terminal and adjust `parse(line:)` to match.
 - `nettop` may prompt for permission the first time it runs, or require the
   app to be run as an admin user, depending on macOS version.
-- App icon / Dock icon aren't set (no `.icns` provided).
+- The app icon is drawn by `scripts/make-icon.py` into
+  `Sources/NetPulse/Resources/AppIcon.png`; `build-app.sh` turns that into
+  `NetPulse.icns` with `sips`/`iconutil` at package time. Edit the script,
+  not the PNG. macOS caches Dock icons aggressively — `killall Dock` if a
+  rebuilt bundle still shows the old one.
