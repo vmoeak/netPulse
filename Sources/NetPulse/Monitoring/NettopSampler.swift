@@ -4,15 +4,16 @@ import Foundation
 /// tool (no special entitlement needed, unlike the Network Extension APIs
 /// that would give the mockup's precision).
 ///
-/// NOTE ON FORMAT ASSUMPTIONS: this parser was written against documented
-/// `nettop` behavior and has not been run against a live macOS box in this
-/// environment. It expects each data row's first CSV field to look like
-/// `"ProcessName.PID"` and treats the last two numeric-looking fields on
-/// the line as cumulative bytes-in/bytes-out. If real output doesn't match
-/// (e.g. a different field order), the watchdog in `armWatchdog()` below
-/// will flip `status` to `.degraded` after 5s of no parsed rows instead of
-/// silently showing all-zero data — check Console output and adjust
-/// `parse(line:)` first.
+/// NOTE ON FORMAT ASSUMPTIONS: `nettop`'s row layout varies between macOS
+/// versions, so `parse(line:)` scans a row's comma-separated cells for the
+/// `"ProcessName.PID"` one rather than assuming it comes first, and reads
+/// the last two numeric cells as cumulative bytes-in/bytes-out.
+///
+/// When nothing parses, the status message says which of the two failure
+/// modes happened — nettop produced no output at all, or it produced output
+/// no row of which was recognizable (in which case the message quotes the
+/// first line, so the real format can be read off the UI) — and a nettop
+/// that dies on startup reports its own stderr instead.
 final class NettopSampler {
     struct Sample {
         let pid: Int32
@@ -26,11 +27,20 @@ final class NettopSampler {
 
     private var process: Process?
     private var outputPipe: Pipe?
+    private var errorPipe: Pipe?
     private var buffer = Data()
     private let newline = Data([0x0A])
     private let lock = NSLock()
     private var latest: [Int32: Sample] = [:]
     private var watchdogWorkItem: DispatchWorkItem?
+    /// Diagnostics for the watchdog, all guarded by `lock`: whether nettop
+    /// wrote anything at all, the first few lines verbatim (so an unexpected
+    /// format can be reported instead of guessed at), whatever it put on
+    /// stderr, and whether a hard failure was already surfaced.
+    private var sawAnyOutput = false
+    private var firstLines: [String] = []
+    private var stderrBuffer = Data()
+    private var didReportHardFailure = false
 
     func start() {
         let p = Process()
@@ -42,22 +52,47 @@ final class NettopSampler {
         p.arguments = ["nettop", "-P", "-x", "-l", "0", "-s", "1", "-J", "bytes_in,bytes_out"]
 
         let out = Pipe()
+        let err = Pipe()
         p.standardOutput = out
-        p.standardError = Pipe() // discarded
+        // Kept rather than discarded: when nettop rejects an argument or lacks
+        // permission it says so here and then exits, and that message is far
+        // more useful than the watchdog's generic "no data" guess.
+        p.standardError = err
 
         out.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
             self?.consume(data)
         }
+        err.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let self else { return }
+            self.lock.lock()
+            self.stderrBuffer.append(data)
+            if self.stderrBuffer.count > 4096 {
+                self.stderrBuffer.removeFirst(self.stderrBuffer.count - 4096)
+            }
+            self.lock.unlock()
+        }
         p.terminationHandler = { [weak self] proc in
-            self?.onStatusChange?(.unavailable("nettop 已退出（code \(proc.terminationStatus)）。它可能需要更高权限，或此 Mac 上路径不同。"))
+            guard let self else { return }
+            self.lock.lock()
+            let stderrText = String(data: self.stderrBuffer, encoding: .utf8) ?? ""
+            self.didReportHardFailure = true
+            self.lock.unlock()
+            self.watchdogWorkItem?.cancel()
+            let detail = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let suffix = detail.isEmpty
+                ? "它可能需要更高权限，或此 Mac 上路径不同。"
+                : "nettop 输出：\(detail.suffix(400))"
+            self.onStatusChange?(.unavailable("nettop 已退出（code \(proc.terminationStatus)）。\(suffix)"))
         }
 
         do {
             try p.run()
             process = p
             outputPipe = out
+            errorPipe = err
             armWatchdog()
         } catch {
             onStatusChange?(.unavailable("无法启动 nettop：\(error.localizedDescription)"))
@@ -67,10 +102,12 @@ final class NettopSampler {
     func stop() {
         watchdogWorkItem?.cancel()
         outputPipe?.fileHandleForReading.readabilityHandler = nil
+        errorPipe?.fileHandleForReading.readabilityHandler = nil
         process?.terminationHandler = nil
         process?.terminate()
         process = nil
         outputPipe = nil
+        errorPipe = nil
     }
 
     func snapshot() -> [Int32: Sample] {
@@ -83,9 +120,17 @@ final class NettopSampler {
             guard let self else { return }
             self.lock.lock()
             let empty = self.latest.isEmpty
+            // A nettop that already died reported its own stderr; don't paper
+            // over that with a vaguer message five seconds later.
+            let alreadyReported = self.didReportHardFailure
+            let sawOutput = self.sawAnyOutput
+            let preview = self.firstLines.joined(separator: " ⏎ ")
             self.lock.unlock()
-            if empty {
-                self.onStatusChange?(.degraded("nettop 5 秒内未返回任何数据。可能需要在系统设置的隐私权限中允许，或该 macOS 版本的输出格式与预期不同。"))
+            guard empty, !alreadyReported else { return }
+            if sawOutput {
+                self.onStatusChange?(.degraded("nettop 有输出，但没有能识别的数据行 —— 该 macOS 版本的格式与预期不同。开头几行：\(preview)"))
+            } else {
+                self.onStatusChange?(.degraded("nettop 5 秒内没有任何输出。可能需要在系统设置的隐私权限中允许。"))
             }
         }
         watchdogWorkItem = item
@@ -106,11 +151,14 @@ final class NettopSampler {
     private func parse(line: String) {
         let raw = line.trimmingCharacters(in: .whitespaces)
         guard !raw.isEmpty else { return }
+
+        lock.lock()
+        sawAnyOutput = true
+        if firstLines.count < 3 { firstLines.append(String(raw.prefix(120))) }
+        lock.unlock()
+
         let fields = raw.components(separatedBy: ",")
-        guard let first = fields.first, let dot = first.lastIndex(of: ".") else { return }
-        let pidString = first[first.index(after: dot)...]
-        guard let pid = Int32(pidString) else { return }
-        let command = String(first[first.startIndex..<dot])
+        guard let (command, pid) = Self.processCell(in: fields) else { return }
 
         let numericFields = fields.compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
         guard numericFields.count >= 2 else { return }
@@ -120,5 +168,23 @@ final class NettopSampler {
         lock.lock()
         latest[pid] = Sample(pid: pid, command: command, bytesInCumKB: bytesIn / 1024, bytesOutCumKB: bytesOut / 1024)
         lock.unlock()
+    }
+
+    /// Finds the `"ProcessName.PID"` cell in a row. Some macOS versions put it
+    /// first, others lead with an empty or timestamp cell, so scan rather than
+    /// assume a position — and skip cells that only look the part, like the
+    /// `12:00:00.123456` timestamp, which also ends in a dot and digits.
+    private static func processCell(in fields: [String]) -> (command: String, pid: Int32)? {
+        for field in fields {
+            let cell = field.trimmingCharacters(in: .whitespaces)
+            guard !cell.contains(":"), let dot = cell.lastIndex(of: ".") else { continue }
+            let digits = cell[cell.index(after: dot)...]
+            guard (1...7).contains(digits.count), digits.allSatisfy(\.isNumber),
+                  let pid = Int32(digits), pid > 0 else { continue }
+            let command = String(cell[cell.startIndex..<dot])
+            guard !command.isEmpty else { continue }
+            return (command, pid)
+        }
+        return nil
     }
 }

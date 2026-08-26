@@ -61,8 +61,11 @@ open NetPulse.app
 - `NettopSampler`'s text parser is the least-verified part of this project
   (see the comment at the top of `Monitoring/NettopSampler.swift`) — it was
   written against documented `nettop` behavior, not tested against live
-  output. If the sidebar shows "nettop 未返回数据…", check `nettop -P -x -l 2
-  -J bytes_in,bytes_out` in Terminal and adjust `parse(line:)` to match.
+  output. The sidebar status distinguishes the failure modes: nettop exiting
+  (its own stderr is quoted), producing nothing at all, or producing rows
+  none of which parse (the first lines are quoted, so the real format can be
+  read straight off the UI). Compare against `nettop -P -x -l 2 -J
+  bytes_in,bytes_out` in Terminal and adjust `parse(line:)` to match.
 - `nettop` may prompt for permission the first time it runs, or require the
   app to be run as an admin user, depending on macOS version.
 - App icon / Dock icon aren't set (no `.icns` provided).
