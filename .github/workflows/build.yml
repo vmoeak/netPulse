@@ -1,0 +1,35 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain info
+        run: |
+          sw_vers
+          swift --version
+
+      - name: Build (debug)
+        run: swift build -v
+
+      - name: Build (release)
+        run: swift build -c release -v
+
+      - name: Package .app bundle
+        run: |
+          chmod +x scripts/build-app.sh
+          scripts/build-app.sh release
+
+      - name: Upload NetPulse.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetPulse-app
+          path: dist/NetPulse.app
+          if-no-files-found: error

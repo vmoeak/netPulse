@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>NetPulse</string>
+	<key>CFBundleDisplayName</key>
+	<string>NetPulse</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.vmoeak.netpulse</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleExecutable</key>
+	<string>NetPulse</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>NetPulse</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<!--
+	  NetPulse is a regular (Dock-visible) app with a normal main window, plus a
+	  MenuBarExtra status item — matching the design, which shows a full main
+	  window (traffic-light chrome, standard app menu) alongside a menu-bar
+	  rate chip. LSUIElement is intentionally omitted/false so the Dock icon
+	  and app menu appear.
+	-->
+</dict>
+</plist>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  NetPulse shells out to `nettop` and `lsof` to read other processes'
+	  network activity. Both refuse to work inside the App Sandbox (they need
+	  to inspect sockets that don't belong to this process), so the sandbox is
+	  disabled here. This means the app cannot be distributed through the Mac
+	  App Store as-is; it's fine for Developer ID / local distribution, which
+	  is how comparable tools (Stats, iStat Menus, etc.) ship.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+</dict>
+</plist>
