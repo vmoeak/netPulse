@@ -26,6 +26,55 @@ enum TimeRange: String, CaseIterable, Identifiable, Hashable {
     }
 }
 
+/// Which of the sidebar's 监控 entries the panes to its right are showing.
+enum SidebarSection: String, CaseIterable, Identifiable {
+    case apps, connections, domains
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .apps: return "所有 App"
+        case .connections: return "活跃连接"
+        case .domains: return "域名总览"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .apps: return "square.grid.2x2"
+        case .connections: return "point.3.filled.connected.trianglepath.dotted"
+        case .domains: return "globe"
+        }
+    }
+}
+
+/// One app↔host pair — the unit 活跃连接 lists, flattening the per-app
+/// domain breakdowns into a single machine-wide view.
+struct ConnectionRow: Identifiable, Equatable {
+    var id: String { appID + "|" + host }
+    var appID: String
+    var appName: String
+    var badge: AppBadge
+    var host: String
+    var kind: String
+    var rateDownKBps: Double
+    var connectionCount: Int
+}
+
+/// One remote host with every app talking to it folded together, for 域名总览
+/// — the same hosts as `DomainUsage`, but keyed by host instead of by app.
+struct DomainRollup: Identifiable, Equatable {
+    var id: String { host }
+    var host: String
+    var kind: String
+    var rateDownKBps: Double
+    var totalDownKB: Double
+    var totalUpKB: Double
+    var connectionCount: Int
+    var appNames: [String]
+}
+
 /// App list sort mode (实时速率 / 累计流量).
 enum SortMode {
     case rate, total

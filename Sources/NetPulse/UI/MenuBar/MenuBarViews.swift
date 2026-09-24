@@ -11,14 +11,20 @@ struct MenuBarExtraLabel: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            VStack(alignment: .trailing, spacing: 1) {
+            // The menu bar gives about 22pt of height. Two 9.5pt lines plus
+            // spacing overflow it and the second one is silently clipped,
+            // which is why only the ▲ row used to show — 8.5pt with no
+            // spacing is what actually fits two lines, and is the size other
+            // network meters use up here.
+            VStack(alignment: .trailing, spacing: 0) {
                 Text("▲ \(Format.rate(engine.topApp?.rateUpKBps ?? 0))")
                     .foregroundStyle(Color(hex: 0xFFD479))
                 Text("▼ \(Format.rate(engine.topApp?.rateDownKBps ?? 0))")
                     .foregroundStyle(Color(hex: 0x7EC8FF))
             }
-            .font(.system(size: 9.5))
+            .font(.system(size: 8.5))
             .monospacedDigit()
+            .frame(height: 20)
 
             MiniBars(values: Array((engine.topApp?.downHistory ?? []).suffix(9)))
         }
@@ -59,7 +65,27 @@ struct MenuBarPopoverView: View {
         }
         .frame(width: 340)
         .foregroundStyle(.white)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .background {
+            // The whole card is written white-on-dark, like the design's
+            // menu-bar panel. `.ultraThinMaterial` on its own renders *light*
+            // in Light Appearance, which left white text on a near-white
+            // frosted panel — hence the washed-out look. Tint the material
+            // dark so the panel matches what the content assumes, whichever
+            // appearance the Mac is in.
+            ZStack {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color(hex: 0x14141A).opacity(0.86))
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+        )
+        // Keeps the material (and anything semantic inside) on its dark
+        // variant even when the system is in Light Appearance.
+        .environment(\.colorScheme, .dark)
     }
 
     private var header: some View {
@@ -67,16 +93,16 @@ struct MenuBarPopoverView: View {
             HStack {
                 Text("当前占用最高")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(.white.opacity(0.62))
                 Spacer()
-                Text("实时").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                Text("实时").font(.system(size: 11)).foregroundStyle(.white.opacity(0.62))
             }
             if let top = engine.topApp {
                 HStack(spacing: 12) {
                     IconBadge(badge: top.badge, size: 38, cornerRadius: 9, fontSize: 15)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(top.name).font(.system(size: 14, weight: .semibold))
-                        Text(top.meta).font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                        Text(top.meta).font(.system(size: 11)).foregroundStyle(.white.opacity(0.62))
                     }
                     Spacer()
                     VStack(alignment: .trailing, spacing: 3) {
@@ -87,7 +113,7 @@ struct MenuBarPopoverView: View {
                     .monospacedDigit()
                 }
             } else {
-                Text("暂无数据").font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+                Text("暂无数据").font(.system(size: 12)).foregroundStyle(.white.opacity(0.62))
             }
         }
         .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
@@ -98,7 +124,7 @@ struct MenuBarPopoverView: View {
             ForEach(engine.popoverList) { app in
                 HStack(spacing: 10) {
                     IconBadge(badge: app.badge, size: 20, cornerRadius: 5, fontSize: 9)
-                    Text(app.name).font(.system(size: 12.5)).foregroundStyle(.white.opacity(0.9))
+                    Text(app.name).font(.system(size: 12.5)).foregroundStyle(.white.opacity(0.94))
                     Spacer()
                     Text("▼ \(Format.rate(app.rateDownKBps))")
                         .foregroundStyle(Color(hex: 0x7EC8FF))
@@ -126,11 +152,11 @@ struct MenuBarPopoverView: View {
             .buttonStyle(.plain)
         }
         .font(.system(size: 11.5))
-        .foregroundStyle(.white.opacity(0.55))
+        .foregroundStyle(.white.opacity(0.72))
         .padding(.horizontal, 16).padding(.vertical, 10)
     }
 
     private var hairline: some View {
-        Rectangle().fill(Color.white.opacity(0.12)).frame(height: 0.5)
+        Rectangle().fill(Color.white.opacity(0.14)).frame(height: 0.5)
     }
 }

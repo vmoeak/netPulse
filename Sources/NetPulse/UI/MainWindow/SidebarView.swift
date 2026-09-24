@@ -12,9 +12,14 @@ struct SidebarView: View {
             VStack(alignment: .leading, spacing: 1) {
                 sectionLabel("监控")
 
-                NavRow(systemImage: "square.grid.2x2", title: "所有 App", trailing: "\(engine.apps.count)", selected: true)
-                NavRow(systemImage: "point.3.filled.connected.trianglepath.dotted", title: "活跃连接", trailing: "\(engine.connectionCount)", selected: false)
-                NavRow(systemImage: "globe", title: "域名总览", trailing: nil, selected: false)
+                ForEach(SidebarSection.allCases) { section in
+                    NavRow(systemImage: section.systemImage,
+                           title: section.label,
+                           trailing: badgeCount(for: section),
+                           selected: engine.section == section)
+                        .contentShape(Rectangle())
+                        .onTapGesture { engine.section = section }
+                }
 
                 sectionLabel("统计区间").padding(.top, 14)
 
@@ -49,6 +54,14 @@ struct SidebarView: View {
         .frame(width: 216)
         .background(Theme.sidebarBackground)
         .overlay(Rectangle().fill(Theme.hairline).frame(width: 0.5), alignment: .trailing)
+    }
+
+    private func badgeCount(for section: SidebarSection) -> String {
+        switch section {
+        case .apps: return "\(engine.apps.count)"
+        case .connections: return "\(engine.connectionCount)"
+        case .domains: return "\(engine.domainRollups.count)"
+        }
     }
 
     private var statusLine: some View {

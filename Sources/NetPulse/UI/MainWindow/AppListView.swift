@@ -21,7 +21,10 @@ struct AppListView: View {
                 .padding(.vertical, 4)
             }
         }
-        .frame(width: 472)
+        // Was a hard 472; flexes now so the window can narrow (see PaneWidth).
+        .frame(minWidth: PaneWidth.listMin,
+               idealWidth: PaneWidth.listIdeal,
+               maxWidth: PaneWidth.listMax)
         .background(Theme.paneBackground)
         .overlay(Rectangle().fill(Theme.hairline).frame(width: 0.5), alignment: .trailing)
     }

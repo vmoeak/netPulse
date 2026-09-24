@@ -10,7 +10,11 @@ in the original handoff for the design conversation).
 - **Week/month/all-time rollups**: real, persisted to
   `~/Library/Application Support/NetPulse/history.json` day-by-day.
 - **Domain / host breakdown**: connections are real (via `lsof -i`, reverse-
-  DNS resolved and cached). Per-domain **byte counts are an estimate** —
+  DNS resolved and cached). On a Mac running a local proxy most of a
+  browser's sockets terminate at 127.0.0.1 and the real destination is known
+  only to the proxy, so those rows are labelled with the process holding the
+  listening port ("本机 · Shadowrocket") instead of an anonymous "localhost";
+  the destinations themselves show up under the proxy's own row. Per-domain **byte counts are an estimate** —
   macOS doesn't expose per-connection throughput without the Network
   Extension entitlement (which requires Apple approval), so an app's
   measured rate is split across its currently-open remote hosts weighted by
@@ -58,11 +62,18 @@ open NetPulse.app
 
 ## Known rough edges / things to check on a real Mac
 
-- `NettopSampler`'s text parser is the least-verified part of this project
+- `NettopSampler`'s text parser was the least-verified part of this project
   (see the comment at the top of `Monitoring/NettopSampler.swift`) — it was
   written against documented `nettop` behavior, not tested against live
-  output. If the sidebar shows "nettop 未返回数据…", check `nettop -P -x -l 2
-  -J bytes_in,bytes_out` in Terminal and adjust `parse(line:)` to match.
+  output. The sidebar status distinguishes the failure modes: nettop exiting
+  (its own stderr is quoted), producing nothing at all, or producing rows
+  none of which parse (the first lines are quoted, so the real format can be
+  read straight off the UI). Compare against `nettop -P -x -l 2 -J
+  bytes_in,bytes_out` in Terminal and adjust `parse(line:)` to match.
 - `nettop` may prompt for permission the first time it runs, or require the
   app to be run as an admin user, depending on macOS version.
-- App icon / Dock icon aren't set (no `.icns` provided).
+- The app icon is drawn by `scripts/make-icon.py` into
+  `Sources/NetPulse/Resources/AppIcon.png`; `build-app.sh` turns that into
+  `NetPulse.icns` with `sips`/`iconutil` at package time. Edit the script,
+  not the PNG. macOS caches Dock icons aggressively — `killall Dock` if a
+  rebuilt bundle still shows the old one.
