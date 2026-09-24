@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// Orchestrates the live monitors into the `apps`/`selectedApp`/etc. state
 /// the UI binds to — the real-data analogue of `renderVals()` in the
@@ -22,9 +22,12 @@ final class NetworkMonitorEngine: ObservableObject {
 
     /// Per-pid cumulative counters from the previous tick, to derive deltas.
     private var previousSamples: [Int32: NettopSampler.Sample] = [:]
-    /// pid -> stable app identity, resolved once per pid.
-    private var appIdentity: [Int32: ProcessDirectory.Identity] = [:]
-    /// Latest per-pid connection info, refreshed every few seconds.
+    /// pid -> stable app identity, resolved once per process. The start time
+    /// is what tells a reused pid from the process the entry was made for.
+    private var appIdentity: [Int32: (identity: ProcessDirectory.Identity, startTime: UInt64)] = [:]
+    /// Per-pid connection info from the latest lsof pass, refreshed every few
+    /// seconds. Replaced wholesale on each pass: a process that closed its
+    /// last socket is simply absent from the next one.
     private var latestConnections: [Int32: ConnectionInfo] = [:]
     /// Who is listening on which port, so a loopback peer can be named.
     private var latestListeners: [Int: ListenerInfo] = [:]
@@ -32,6 +35,7 @@ final class NetworkMonitorEngine: ObservableObject {
     private var resolvedHosts: [String: String] = [:]
 
     private var tickTimer: Timer?
+    private var terminationObserver: NSObjectProtocol?
     private var hasStarted = false
 
     /// Idempotent — safe to call from multiple view lifecycle hooks (the
@@ -62,6 +66,15 @@ final class NetworkMonitorEngine: ObservableObject {
             // lets the inner `Task` capture it.
             guard let self else { return }
             Task { @MainActor in self.tick() }
+        }
+        // History is saved on a 15s timer; without this the traffic since the
+        // last save is lost on quit. The notification is posted on the main
+        // thread and quitting doesn't wait for a Task, hence assumeIsolated.
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            MainActor.assumeIsolated { self.stop() }
         }
     }
 
@@ -156,7 +169,7 @@ final class NetworkMonitorEngine: ObservableObject {
 
     private func ingestConnections(_ snapshot: ConnectionSnapshot) {
         let infos = snapshot.connections
-        for info in infos { latestConnections[info.pid] = info }
+        latestConnections = Dictionary(infos.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         latestListeners = snapshot.listeners
         // Loopback peers are deliberately not resolved: reverse DNS answers
         // "localhost" for all of them, which is exactly the useless label the
@@ -175,6 +188,9 @@ final class NetworkMonitorEngine: ObservableObject {
     private func tick() {
         let samples = nettop.snapshot()
         guard !samples.isEmpty else {
+            // Empty means nettop is (re)starting. Counters from a previous run
+            // aren't a baseline for the next one's first rows.
+            previousSamples = [:]
             if status == .ok { status = .degraded("等待 nettop 数据…") }
             return
         }
@@ -182,13 +198,30 @@ final class NetworkMonitorEngine: ObservableObject {
 
         let pausedIDs = Set(apps.filter(\.isPaused).map(\.id))
         var aggregates: [String: Aggregate] = [:]
+        var liveSamples: [Int32: NettopSampler.Sample] = [:]
+        var liveAppIDs: Set<String> = []
+        var exitedPIDs: [Int32] = []
 
         for (pid, sample) in samples {
-            let identity = appIdentity[pid] ?? {
+            // nettop stops listing an exited process but its last row stays in
+            // the snapshot, so liveness is checked here rather than inferred.
+            guard let startTime = ProcessDirectory.startTime(of: pid) else {
+                exitedPIDs.append(pid)
+                continue
+            }
+            if let cached = appIdentity[pid], cached.startTime != startTime {
+                // Same pid, different process: the cached identity and the
+                // previous counters belong to the one that exited.
+                appIdentity[pid] = nil
+                previousSamples[pid] = nil
+            }
+            let identity = appIdentity[pid]?.identity ?? {
                 let resolved = ProcessDirectory.identify(pid: pid, fallbackCommand: sample.command)
-                appIdentity[pid] = resolved
+                appIdentity[pid] = (resolved, startTime)
                 return resolved
             }()
+            liveSamples[pid] = sample
+            liveAppIDs.insert(identity.id)
             guard !pausedIDs.contains(identity.id) else { continue }
 
             let prev = previousSamples[pid]
@@ -204,14 +237,19 @@ final class NetworkMonitorEngine: ObservableObject {
 
             history.addDelta(appID: identity.id, downKB: downDeltaKB, upKB: upDeltaKB)
         }
-        previousSamples = samples
+        previousSamples = liveSamples
+        nettop.forget(pids: exitedPIDs)
+        for pid in exitedPIDs { appIdentity[pid] = nil }
 
         var next: [String: AppUsage] = [:]
         for (id, agg) in aggregates {
             next[id] = buildUsage(id: id, agg: agg)
         }
-        for existing in apps where next[existing.id] == nil {
-            next[existing.id] = existing // e.g. paused, or nettop skipped it this tick
+        // Only paused apps are missing from `aggregates` while still running;
+        // they keep their frozen row. An app with no live process left has
+        // quit and drops out of the list (its totals stay in history).
+        for existing in apps where next[existing.id] == nil && liveAppIDs.contains(existing.id) {
+            next[existing.id] = existing
         }
 
         apps = next.values.sorted(by: comparator(for: sortMode, range: range))

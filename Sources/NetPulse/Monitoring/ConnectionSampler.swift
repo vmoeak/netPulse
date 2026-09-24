@@ -107,20 +107,29 @@ final class ConnectionSampler {
     }
 
     private static func parse(_ text: String) -> ConnectionSnapshot {
-        var result: [ConnectionInfo] = []
+        // Loopback sockets are held back until the whole pass is read: telling
+        // an outbound one from an accepted inbound one needs the listener map,
+        // and a process's listening socket can come after its connections.
+        struct Pending {
+            let pid: Int32
+            let command: String
+            let remoteCounts: [String: Int]
+            let loopbackPorts: [(local: Int?, remote: Int)]
+        }
+        var pending: [Pending] = []
         var listeners: [Int: ListenerInfo] = [:]
         var pid: Int32?
         var command = ""
         var remoteCounts: [String: Int] = [:]
-        var loopbackCounts: [Int: Int] = [:]
+        var loopbackPorts: [(local: Int?, remote: Int)] = []
         var proto = ""
 
         func flush() {
-            if let pid, !(remoteCounts.isEmpty && loopbackCounts.isEmpty) {
-                result.append(ConnectionInfo(pid: pid,
-                                            command: command,
-                                            remoteCounts: remoteCounts,
-                                            loopbackCounts: loopbackCounts))
+            if let pid, !(remoteCounts.isEmpty && loopbackPorts.isEmpty) {
+                pending.append(Pending(pid: pid,
+                                       command: command,
+                                       remoteCounts: remoteCounts,
+                                       loopbackPorts: loopbackPorts))
             }
         }
 
@@ -133,7 +142,7 @@ final class ConnectionSampler {
                 pid = Int32(value)
                 command = ""
                 remoteCounts = [:]
-                loopbackCounts = [:]
+                loopbackPorts = []
             case "c":
                 command = value
             case "f":
@@ -143,7 +152,7 @@ final class ConnectionSampler {
             case "n":
                 if let peer = remotePeer(fromLsofName: value) {
                     if isLoopback(peer.host), let port = peer.port {
-                        loopbackCounts[port, default: 0] += 1
+                        loopbackPorts.append((localPort(fromLsofName: value), port))
                     } else {
                         remoteCounts[peer.host, default: 0] += 1
                     }
@@ -159,6 +168,26 @@ final class ConnectionSampler {
             }
         }
         flush()
+
+        var result: [ConnectionInfo] = []
+        for record in pending {
+            var loopbackCounts: [Int: Int] = [:]
+            for ports in record.loopbackPorts {
+                // A socket whose *local* port is one this process listens on
+                // was accepted, not opened: it's a local client of this
+                // process (a browser talking to a proxy). Its remote port is
+                // that client's ephemeral one, so as a row it would read
+                // "localhost:53512" for every client — noise, and the client
+                // already lists the same connection from its own side.
+                if let local = ports.local, listeners[local]?.pid == record.pid { continue }
+                loopbackCounts[ports.remote, default: 0] += 1
+            }
+            guard !(record.remoteCounts.isEmpty && loopbackCounts.isEmpty) else { continue }
+            result.append(ConnectionInfo(pid: record.pid,
+                                         command: record.command,
+                                         remoteCounts: record.remoteCounts,
+                                         loopbackCounts: loopbackCounts))
+        }
         return ConnectionSnapshot(connections: result, listeners: listeners)
     }
 
@@ -170,6 +199,12 @@ final class ConnectionSampler {
         var remote = String(name[arrowRange.upperBound...])
         if let space = remote.firstIndex(of: " ") { remote = String(remote[..<space]) }
         return splitHostPort(remote)
+    }
+
+    /// The local end of a connected socket's `local->remote` name.
+    private static func localPort(fromLsofName name: String) -> Int? {
+        guard let arrowRange = name.range(of: "->") else { return nil }
+        return splitHostPort(String(name[..<arrowRange.lowerBound]))?.port
     }
 
     private static func listeningPort(fromLsofName name: String) -> Int? {

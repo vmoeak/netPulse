@@ -5,11 +5,14 @@ struct NetPulseApp: App {
     @StateObject private var engine = NetworkMonitorEngine()
 
     var body: some Scene {
-        WindowGroup(id: "main") {
+        // `Window`, not `WindowGroup`: there is one main window, and the
+        // popover's 打开主窗口 should bring it forward. On a WindowGroup every
+        // `openWindow(id:)` opens another copy.
+        Window("NetPulse", id: "main") {
             MainWindowView(engine: engine)
         }
         .defaultSize(width: 1280, height: 820)
-        // WindowGroup's default resizability lets the window be dragged below
+        // The default resizability lets the window be dragged below
         // what its content needs, which clips the panes on both sides instead
         // of compressing them. contentMinSize makes the floor the panes
         // declare the window's floor too.

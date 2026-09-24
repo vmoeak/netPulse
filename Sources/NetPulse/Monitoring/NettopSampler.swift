@@ -47,8 +47,24 @@ final class NettopSampler {
     private var firstLines: [String] = []
     private var stderrBuffer = Data()
     private var didReportHardFailure = false
+    /// Bumped (under `lock`) on every launch, so output still draining from a
+    /// nettop that already exited can't land in the new run's samples.
+    private var generation = 0
+
+    /// Main-thread only. A nettop that exits on its own is relaunched after
+    /// `restartDelay`, which doubles on each quick failure so one that dies
+    /// immediately (e.g. no permission) isn't respawned every second.
+    private var isStopped = false
+    private var restartDelay: TimeInterval = NettopSampler.minRestartDelay
+    private static let minRestartDelay: TimeInterval = 2
+    private static let maxRestartDelay: TimeInterval = 60
 
     func start() {
+        isStopped = false
+        launch()
+    }
+
+    private func launch() {
         let p = Process()
         // Resolved via PATH rather than a hardcoded /usr/bin or /usr/sbin —
         // both are plausible for nettop and this avoids guessing wrong.
@@ -65,10 +81,21 @@ final class NettopSampler {
         // more useful than the watchdog's generic "no data" guess.
         p.standardError = err
 
+        lock.lock()
+        generation += 1
+        let gen = generation
+        latest = [:]
+        buffer = Data()
+        sawAnyOutput = false
+        firstLines = []
+        stderrBuffer = Data()
+        didReportHardFailure = false
+        lock.unlock()
+
         out.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
-            self?.consume(data)
+            self?.consume(data, generation: gen)
         }
         err.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -80,18 +107,23 @@ final class NettopSampler {
             }
             self.lock.unlock()
         }
+        let launchedAt = Date()
         p.terminationHandler = { [weak self] proc in
             guard let self else { return }
             self.lock.lock()
             let stderrText = String(data: self.stderrBuffer, encoding: .utf8) ?? ""
             self.didReportHardFailure = true
+            // Its counters stop here. Leaving them in `latest` would keep
+            // `snapshot()` non-empty, and the engine would go on reading the
+            // frozen values as a healthy all-zero feed.
+            self.latest = [:]
             self.lock.unlock()
             self.watchdogWorkItem?.cancel()
+            let status = proc.terminationStatus
             let detail = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
-            let suffix = detail.isEmpty
-                ? "它可能需要更高权限，或此 Mac 上路径不同。"
-                : "nettop 输出：\(detail.suffix(400))"
-            self.onStatusChange?(.unavailable("nettop 已退出（code \(proc.terminationStatus)）。\(suffix)"))
+            DispatchQueue.main.async { [weak self] in
+                self?.scheduleRestart(exitStatus: status, stderr: detail, ranFor: Date().timeIntervalSince(launchedAt))
+            }
         }
 
         do {
@@ -101,11 +133,39 @@ final class NettopSampler {
             errorPipe = err
             armWatchdog()
         } catch {
+            out.fileHandleForReading.readabilityHandler = nil
+            err.fileHandleForReading.readabilityHandler = nil
             onStatusChange?(.unavailable("无法启动 nettop：\(error.localizedDescription)"))
         }
     }
 
+    /// Main thread. A run that lasted a while was healthy, so its exit starts
+    /// the backoff over; a quick exit doubles it.
+    private func scheduleRestart(exitStatus: Int32, stderr detail: String, ranFor: TimeInterval) {
+        guard !isStopped else { return }
+        outputPipe?.fileHandleForReading.readabilityHandler = nil
+        errorPipe?.fileHandleForReading.readabilityHandler = nil
+        process = nil
+        outputPipe = nil
+        errorPipe = nil
+
+        if ranFor > 30 { restartDelay = Self.minRestartDelay }
+        let delay = restartDelay
+        restartDelay = min(restartDelay * 2, Self.maxRestartDelay)
+
+        let suffix = detail.isEmpty
+            ? "它可能需要更高权限，或此 Mac 上路径不同。"
+            : "nettop 输出：\(detail.suffix(400))"
+        onStatusChange?(.unavailable("nettop 已退出（code \(exitStatus)），\(Int(delay)) 秒后重试。\(suffix)"))
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.isStopped, self.process == nil else { return }
+            self.launch()
+        }
+    }
+
     func stop() {
+        isStopped = true
         watchdogWorkItem?.cancel()
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         errorPipe?.fileHandleForReading.readabilityHandler = nil
@@ -119,6 +179,16 @@ final class NettopSampler {
     func snapshot() -> [Int32: Sample] {
         lock.lock(); defer { lock.unlock() }
         return latest
+    }
+
+    /// Drops processes that have exited. nettop stops listing a process once
+    /// it is gone but never says so, so without this its last row would stay
+    /// in `latest` for good.
+    func forget(pids: [Int32]) {
+        guard !pids.isEmpty else { return }
+        lock.lock()
+        for pid in pids { latest[pid] = nil }
+        lock.unlock()
     }
 
     private func armWatchdog() {
@@ -143,18 +213,22 @@ final class NettopSampler {
         DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: item)
     }
 
-    private func consume(_ data: Data) {
+    private func consume(_ data: Data, generation gen: Int) {
+        lock.lock()
+        let current = gen == generation
+        lock.unlock()
+        guard current else { return }
         buffer.append(data)
         while let range = buffer.range(of: newline) {
             let lineData = buffer.subdata(in: buffer.startIndex..<range.lowerBound)
             buffer.removeSubrange(buffer.startIndex..<range.upperBound)
             if let line = String(data: lineData, encoding: .utf8) {
-                parse(line: line)
+                parse(line: line, generation: gen)
             }
         }
     }
 
-    private func parse(line: String) {
+    private func parse(line: String, generation gen: Int) {
         let raw = line.trimmingCharacters(in: .whitespaces)
         guard !raw.isEmpty else { return }
 
@@ -166,11 +240,12 @@ final class NettopSampler {
         guard let row = Self.parseRow(raw) else { return }
 
         lock.lock()
+        defer { lock.unlock() }
+        guard gen == generation else { return }
         latest[row.pid] = Sample(pid: row.pid,
                                  command: row.command,
                                  bytesInCumKB: row.bytesIn / 1024,
                                  bytesOutCumKB: row.bytesOut / 1024)
-        lock.unlock()
     }
 
     private struct Row {

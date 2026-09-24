@@ -69,17 +69,33 @@ enum ProcessDirectory {
         return nil
     }
 
+    /// When `pid` was started, in microseconds since the epoch, or nil if no
+    /// such process exists. A pid alone isn't an identity — macOS reuses them
+    /// — but pid plus start time is, so this is both the liveness test and
+    /// the reuse test for anything cached by pid.
+    static func startTime(of pid: Int32) -> UInt64? {
+        guard let info = kinfo(of: pid) else { return nil }
+        let start = info.kp_proc.p_un.__p_starttime
+        return UInt64(start.tv_sec) * 1_000_000 + UInt64(start.tv_usec)
+    }
+
     private static func parentPID(of pid: Int32) -> Int32? {
+        guard let info = kinfo(of: pid) else { return nil }
+        let ppid = info.kp_eproc.e_ppid
+        // Stop at launchd: everything descends from it, so it owns nothing.
+        return ppid > 1 ? ppid : nil
+    }
+
+    private static func kinfo(of pid: Int32) -> kinfo_proc? {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         let ok = mib.withUnsafeMutableBufferPointer { buffer in
             sysctl(buffer.baseAddress, UInt32(buffer.count), &info, &size, nil, 0) == 0
         }
+        // A pid that doesn't exist still succeeds, with nothing written.
         guard ok, size > 0 else { return nil }
-        let ppid = info.kp_eproc.e_ppid
-        // Stop at launchd: everything descends from it, so it owns nothing.
-        return ppid > 1 ? ppid : nil
+        return info
     }
 
     private static func executablePath(of pid: Int32) -> String? {
