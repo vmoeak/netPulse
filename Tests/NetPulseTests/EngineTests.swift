@@ -289,11 +289,20 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(engine.apps.first?.id, "proc.steady",
                        "a single-second burst doesn't outrank 5 seconds of steady traffic")
         let steadyRow = try XCTUnwrap(app("proc.steady"))
-        XCTAssertEqual(steadyRow.windowDownKBps, 100, accuracy: 0.001, "500 KB over the last 5 s")
+        // 实时 averages 10 s; 6 ticks so far, so over 6.
+        XCTAssertEqual(steadyRow.windowDownKBps, 500.0 / 6.0, accuracy: 0.001)
         XCTAssertEqual(steadyRow.windowShare, 500.0 / 800.0, accuracy: 0.001)
 
+        burstyKB += 3000                                // tick 7: no re-rank yet
+        feed(bursty, "bursty", downKB: burstyKB)
+        engine.tick()
+        XCTAssertEqual(app("proc.steady")?.windowShare ?? 0, 500.0 / 800.0, accuracy: 0.001,
+                       "shares hold with the order between re-ranks")
+        XCTAssertEqual(engine.apps.first?.id, "proc.steady")
+
         engine.rateWindow = .oneMinute
-        XCTAssertEqual(app("proc.steady")?.windowDownKBps ?? 0, 500.0 / 6.0, accuracy: 0.001,
-                       "averaged over the 6 ticks seen so far")
+        XCTAssertEqual(app("proc.steady")?.windowDownKBps ?? 0, 500.0 / 7.0, accuracy: 0.001,
+                       "averaged over the 7 ticks seen so far")
+        XCTAssertEqual(engine.apps.first?.id, "proc.bursty", "a new window re-ranks at once")
     }
 }

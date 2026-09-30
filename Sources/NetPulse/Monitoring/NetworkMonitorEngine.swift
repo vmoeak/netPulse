@@ -425,7 +425,22 @@ final class NetworkMonitorEngine: ObservableObject {
                                           statusHint: identity.statusHint))
         }
 
-        apps = ordered(withWindowRates(Array(next.values)))
+        // Ranks, share bars and rate columns all come from the same numbers,
+        // refreshed together every few seconds: refreshed separately, a row
+        // at 68% could sit below one at 15% until the next re-rank.
+        if listOrder.isEmpty || tickCount % Self.reorderInterval == 0 {
+            apps = ordered(withWindowRates(Array(next.values)))
+        } else {
+            let previous = Dictionary(apps.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            apps = ordered(next.values.map { app in
+                guard let old = previous[app.id] else { return app }
+                var app = app
+                app.windowDownKBps = old.windowDownKBps
+                app.windowUpKBps = old.windowUpKBps
+                app.windowShare = old.windowShare
+                return app
+            })
+        }
         totalDownHistory = Array((totalDownHistory + [totalDownKBps]).suffix(60))
         totalUpHistory = Array((totalUpHistory + [totalUpKBps]).suffix(60))
         if tickCount % 5 == 1 { refreshArchivedApps() }

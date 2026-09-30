@@ -19,8 +19,6 @@ struct AppListView: View {
                     }
                     idleToggle
                 }
-                // Rows slide to their new places instead of jumping.
-                .animation(.easeInOut(duration: 0.35), value: engine.filteredApps.map(\.id))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
             }
@@ -129,10 +127,10 @@ private struct AppRow: View {
     let range: TimeRange
     let window: RateWindow
 
-    /// 实时 shows this second's rate; a longer window shows its average,
-    /// which is what the list is ranked by.
-    private var shownDown: Double { window == .live ? app.rateDownKBps : app.windowDownKBps }
-    private var shownUp: Double { window == .live ? app.rateUpKBps : app.windowUpKBps }
+    /// The window's average, which is what the list is ranked by: a row
+    /// showing this second's 0 KB/s beside a 19% share read as a bug.
+    private var shownDown: Double { app.windowDownKBps }
+    private var shownUp: Double { app.windowUpKBps }
 
     var body: some View {
         HStack(spacing: 0) {
