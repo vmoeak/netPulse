@@ -389,7 +389,8 @@ final class NetworkMonitorEngine: ObservableObject {
         for (appID, hosts) in hostTotals {
             guard let appName = names[appID] else { continue }
             // A proxy's "为 X 转发" rows are apps, not domains.
-            for (key, totals) in hosts where !key.hasPrefix(Self.forwardPrefix) {
+            for (key, totals) in hosts where !key.hasPrefix(Self.forwardPrefix)
+                && key != Self.closedEndpoint && key != Self.unconnectedEndpoint {
                 let (host, kind) = describe(endpoint: key)
                 var rollup = byHost[host] ?? DomainRollup(host: host, kind: kind, rateDownKBps: 0,
                                                           totalDownKB: 0, totalUpKB: 0,
@@ -438,7 +439,10 @@ final class NetworkMonitorEngine: ObservableObject {
         // Loopback peers are deliberately not resolved: reverse DNS answers
         // "localhost" for all of them, which is exactly the useless label the
         // listener lookup exists to replace.
-        let seenIPs = Set(infos.flatMap { Array($0.remoteCounts.keys) })
+        resolveHosts(Set(infos.flatMap { Array($0.remoteCounts.keys) }))
+    }
+
+    private func resolveHosts(_ seenIPs: Set<String>) {
         let unresolved = seenIPs.subtracting(resolvedHosts.keys).subtracting(pendingLookups)
         guard !unresolved.isEmpty else { return }
         pendingLookups.formUnion(unresolved)
@@ -466,6 +470,11 @@ final class NetworkMonitorEngine: ObservableObject {
 
         var aggregates: [String: Aggregate] = [:]
         var pausedRunning: [String: ProcessDirectory.Identity] = [:]
+        // nettop's per-connection counters, when it gives them, split each
+        // app's bytes by host exactly; otherwise lsof's connection counts
+        // are all there is to go on.
+        let exact = samples.values.contains { !$0.connections.isEmpty }
+        var remoteIPs: Set<String> = []
 
         for (pid, sample) in samples {
             let identity = identify(pid: pid, command: sample.command)
@@ -483,6 +492,14 @@ final class NetworkMonitorEngine: ObservableObject {
             agg.downKBps += downDeltaKB
             agg.upKBps += upDeltaKB
             agg.pids.append(pid)
+            if exact {
+                agg.exact = true
+                splitByConnection(sample, previous: prev, appID: identity.id,
+                                  downKB: downDeltaKB, upKB: upDeltaKB, into: &agg)
+                for conn in sample.connections.values where conn.remoteHost != "*" && !conn.isLoopback {
+                    remoteIPs.insert(conn.remoteHost)
+                }
+            }
             aggregates[identity.id] = agg
 
             history.addDelta(appID: identity.id, downKB: downDeltaKB, upKB: upDeltaKB)
@@ -491,6 +508,7 @@ final class NetworkMonitorEngine: ObservableObject {
             }
         }
         previousSamples = samples
+        if !remoteIPs.isEmpty { resolveHosts(remoteIPs) }
 
         proxyAppIDs = findProxyApps()
         var next: [String: AppUsage] = [:]
@@ -677,6 +695,57 @@ final class NetworkMonitorEngine: ObservableObject {
         var downKBps: Double = 0
         var upKBps: Double = 0
         var pids: [Int32] = []
+        /// Filled from nettop's connection rows: this tick's KB per endpoint
+        /// and the connections open to each.
+        var exact = false
+        var endpointKB: [String: HostTotals] = [:]
+        var endpointConns: [String: Int] = [:]
+    }
+
+    /// Endpoint for bytes whose connection closed between two samples: the
+    /// process's counters include them, but no connection row is left to
+    /// say where they went.
+    private static let closedEndpoint = "closed:"
+    /// Sockets with no fixed peer (mDNS, some UDP senders).
+    private static let unconnectedEndpoint = "unconnected:"
+
+    /// Adds one process's traffic this tick to `agg`, per remote endpoint,
+    /// from the growth of each connection's own counters. A connection that
+    /// wasn't there last sample opened since, so all of its bytes are new;
+    /// whatever the process moved beyond its open connections went through
+    /// ones that have already closed.
+    private func splitByConnection(_ sample: NettopSampler.Sample, previous: NettopSampler.Sample?,
+                                   appID: String, downKB: Double, upKB: Double,
+                                   into agg: inout Aggregate) {
+        var seenDown = 0.0
+        var seenUp = 0.0
+        for (key, conn) in sample.connections {
+            let endpoint: String
+            if conn.remoteHost == "*" {
+                endpoint = Self.unconnectedEndpoint
+            } else if conn.isLoopback {
+                endpoint = loopbackEndpoint(port: conn.remotePort ?? 0, appID: appID)
+            } else {
+                endpoint = conn.remoteHost
+            }
+            if conn.remoteHost != "*" { agg.endpointConns[endpoint, default: 0] += 1 }
+            // A process's first sample is only the baseline, as for its totals.
+            guard let previous else { continue }
+            let old = previous.connections[key]
+            let down = max(0, conn.bytesIn - (old?.bytesIn ?? 0)) / 1024
+            let up = max(0, conn.bytesOut - (old?.bytesOut ?? 0)) / 1024
+            guard down > 0 || up > 0 else { continue }
+            agg.endpointKB[endpoint, default: HostTotals()].downKB += down
+            agg.endpointKB[endpoint, default: HostTotals()].upKB += up
+            seenDown += down
+            seenUp += up
+        }
+        guard previous != nil else { return }
+        let restDown = max(0, downKB - seenDown)
+        let restUp = max(0, upKB - seenUp)
+        guard restDown > 0 || restUp > 0 else { return }
+        agg.endpointKB[Self.closedEndpoint, default: HostTotals()].downKB += restDown
+        agg.endpointKB[Self.closedEndpoint, default: HostTotals()].upKB += restUp
     }
 
     private func buildUsage(id: String, agg: Aggregate) -> AppUsage {
@@ -690,55 +759,57 @@ final class NetworkMonitorEngine: ObservableObject {
         usage.downHistory = Array((usage.downHistory + [agg.downKBps]).suffix(Self.historyLength))
         usage.upHistory = Array((usage.upHistory + [agg.upKBps]).suffix(Self.historyLength))
 
-        var hostConnCounts: [String: Int] = [:]
-        var loopbackConnCounts: [String: Int] = [:]
-        for pid in agg.pids {
-            guard let info = latestConnections[pid] else { continue }
-            for (ip, count) in info.remoteCounts {
-                hostConnCounts[ip, default: 0] += count
+        // This tick's KB and open connections per endpoint: measured when
+        // nettop reports connections, otherwise the app's rate split by how
+        // many of its lsof connections go to each endpoint.
+        var tickKB: [String: HostTotals] = [:]
+        var connCounts: [String: Int] = [:]
+        if agg.exact {
+            tickKB = agg.endpointKB
+            connCounts = agg.endpointConns
+        } else {
+            for pid in agg.pids {
+                guard let info = latestConnections[pid] else { continue }
+                for (ip, count) in info.remoteCounts {
+                    connCounts[ip, default: 0] += count
+                }
+                for (port, count) in info.loopbackCounts {
+                    connCounts[loopbackEndpoint(port: port, appID: id), default: 0] += count
+                }
             }
-            for (port, count) in info.loopbackCounts {
-                loopbackConnCounts[loopbackEndpoint(port: port, appID: id), default: 0] += count
+            let totalConns = Double(max(1, connCounts.values.reduce(0, +)))
+            for (endpoint, count) in connCounts {
+                let share = Double(count) / totalConns
+                tickKB[endpoint] = HostTotals(downKB: agg.downKBps * share, upKB: agg.upKBps * share)
             }
         }
-        usage.connectionCount = hostConnCounts.values.reduce(0, +)
-            + loopbackConnCounts.values.reduce(0, +)
-        let totalConns = max(1, usage.connectionCount)
+        usage.connectionCount = connCounts.values.reduce(0, +)
+
         var appHostTotals = hostTotals[id] ?? [:]
-
-        func domain(endpoint: String, count: Int) -> DomainUsage {
-            let share = Double(count) / Double(totalConns)
-            var totals = appHostTotals[endpoint] ?? HostTotals()
-            totals.downKB += agg.downKBps * share
-            totals.upKB += agg.upKBps * share
-            appHostTotals[endpoint] = totals
-            let (host, kind) = describe(endpoint: endpoint)
-            return DomainUsage(
-                host: host,
-                kind: kind,
-                rateDownKBps: agg.downKBps * share,
-                totalDownKB: totals.downKB,
-                totalUpKB: totals.upKB,
-                connectionCount: count
-            )
-        }
-
-        let remoteDomains = hostConnCounts.map { ip, count in domain(endpoint: ip, count: count) }
-        let loopbackDomains = loopbackConnCounts.map { endpoint, count in
-            domain(endpoint: endpoint, count: count)
+        for (endpoint, kb) in tickKB {
+            appHostTotals[endpoint, default: HostTotals()].downKB += kb.downKB
+            appHostTotals[endpoint, default: HostTotals()].upKB += kb.upKB
         }
         hostTotals[id] = appHostTotals
-        // Several IPs of one service often reverse-resolve to the same name;
-        // they are one row, and two rows would share an id in the lists.
+
+        // Rows are the endpoints open or moving now. Several IPs of one
+        // service often reverse-resolve to the same name; they are one row,
+        // and two rows would share an id in the lists.
+        var byHost: [String: DomainUsage] = [:]
+        var shown = Set(connCounts.keys).union(tickKB.keys)
+        // Closed connections are part of the app's total, so their row
+        // stays once there is something in it.
+        if appHostTotals[Self.closedEndpoint] != nil { shown.insert(Self.closedEndpoint) }
+        for endpoint in shown {
+            let (host, kind) = describe(endpoint: endpoint)
+            var row = byHost[host] ?? DomainUsage(host: host, kind: kind, rateDownKBps: 0,
+                                                  totalDownKB: 0, totalUpKB: 0, connectionCount: 0)
+            row.rateDownKBps += tickKB[endpoint]?.downKB ?? 0
+            row.connectionCount += connCounts[endpoint] ?? 0
+            byHost[host] = row
+        }
         // Totals come from every endpoint under that name, including ones
         // with no connection open this tick, so a row's total never dips.
-        var byHost: [String: DomainUsage] = [:]
-        for d in remoteDomains + loopbackDomains {
-            guard var merged = byHost[d.host] else { byHost[d.host] = d; continue }
-            merged.rateDownKBps += d.rateDownKBps
-            merged.connectionCount += d.connectionCount
-            byHost[d.host] = merged
-        }
         var totalsByHost: [String: HostTotals] = [:]
         for (endpoint, totals) in appHostTotals {
             let host = describe(endpoint: endpoint).host
@@ -818,6 +889,8 @@ final class NetworkMonitorEngine: ObservableObject {
 
     /// Display name and kind for an endpoint key from `hostTotals`.
     private func describe(endpoint: String) -> (host: String, kind: String) {
+        if endpoint == Self.closedEndpoint { return ("已关闭的连接", "连接已结束，无法再分到网站") }
+        if endpoint == Self.unconnectedEndpoint { return ("无固定对端", "广播 / 本地发现") }
         if endpoint.hasPrefix(Self.forwardPrefix) {
             let appID = String(endpoint.dropFirst(Self.forwardPrefix.count))
             // The app's name alone: "为 Google Chrome 转发" got its name
@@ -833,7 +906,17 @@ final class NetworkMonitorEngine: ObservableObject {
             return (endpoint, loopbackPeerLabel(port: port))
         }
         let host = resolvedHosts[endpoint] ?? endpoint
+        // 198.18.0.0/15 is where TUN-mode proxies (Shadowrocket, Clash, …)
+        // hand out fake addresses, one per domain; the system resolver maps
+        // them back to the domain the app asked for.
+        if Self.isFakeIP(endpoint) {
+            return (host, host == endpoint ? "经 TUN 代理" : "经 TUN 代理 · 已解析")
+        }
         return (host, host == endpoint ? "IP 地址" : "已解析主机")
+    }
+
+    static func isFakeIP(_ ip: String) -> Bool {
+        ip.hasPrefix("198.18.") || ip.hasPrefix("198.19.")
     }
 
     private func loopbackPeerLabel(port: Int) -> String {

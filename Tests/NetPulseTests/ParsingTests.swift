@@ -22,6 +22,28 @@ final class ParsingTests: XCTestCase {
         XCTAssertNil(NettopSampler.parseRow("time bytes_in bytes_out"))
     }
 
+    func testNettopConnectionRows() {
+        XCTAssertEqual(NettopSampler.parseLine("Lark Helper.1060        19025   20590\r"),
+                       .process(NettopSampler.Row(command: "Lark Helper", pid: 1060, bytesIn: 19025, bytesOut: 20590)))
+        XCTAssertEqual(NettopSampler.parseLine("   tcp4 192.168.1.5:49753<->203.0.113.7:443   19025   20590"),
+                       .connection(key: "tcp4 192.168.1.5:49753<->203.0.113.7:443",
+                                   NettopSampler.Connection(remoteHost: "203.0.113.7", remotePort: 443,
+                                                            bytesIn: 19025, bytesOut: 20590)))
+        guard case .connection(_, let v6) = NettopSampler.parseLine("   tcp6 ::1.50568<->::1.1082   10   20") else {
+            return XCTFail("IPv6 row not recognized")
+        }
+        XCTAssertEqual(v6.remoteHost, "::1")
+        XCTAssertEqual(v6.remotePort, 1082)
+        XCTAssertTrue(v6.isLoopback)
+        // A socket with no peer and no traffic yet prints no counters.
+        guard case .connection(_, let idle) = NettopSampler.parseLine("   udp6 *.5353<->*.*") else {
+            return XCTFail("counterless row not recognized")
+        }
+        XCTAssertEqual(idle.remoteHost, "*")
+        XCTAssertEqual(idle.bytesIn, 0)
+        XCTAssertEqual(NettopSampler.parseLine("                     bytes_in   bytes_out"), .other)
+    }
+
     func testLsofFieldOutput() throws {
         let text = """
         p123

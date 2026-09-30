@@ -20,6 +20,9 @@ import Foundation
 /// no row of which was recognizable (in which case the message quotes the
 /// first line, so the real format can be read off the UI) — and a nettop
 /// that dies on startup reports its own stderr instead.
+///
+/// Each process row is followed by its connections (see `parseLine`), whose
+/// counters are what split an app's bytes exactly by remote host.
 /// What the engine needs from a per-process byte counter source — the real
 /// `NettopSampler`, or canned samples in tests.
 protocol NettopSource: AnyObject {
@@ -37,6 +40,25 @@ final class NettopSampler: NettopSource {
         /// Cumulative bytes received/sent since the process started, in KB.
         let bytesInCumKB: Double
         let bytesOutCumKB: Double
+        /// The process's open connections, keyed by `"proto local<->remote"`
+        /// (unique while the connection lives). Empty from sources that only
+        /// report per-process totals.
+        var connections: [String: Connection] = [:]
+    }
+
+    /// One connection's cumulative counters, in bytes.
+    struct Connection: Equatable {
+        /// Remote address as nettop printed it (`-n`, so never a name), or
+        /// "*" for an unconnected socket.
+        let remoteHost: String
+        let remotePort: Int?
+        let bytesIn: Double
+        let bytesOut: Double
+
+        var isLoopback: Bool {
+            remoteHost == "::1" || remoteHost == "localhost" || remoteHost.hasPrefix("127.")
+                || remoteHost.hasPrefix("::ffff:127.")
+        }
     }
 
     var onStatusChange: ((MonitoringStatus) -> Void)?
@@ -48,6 +70,11 @@ final class NettopSampler: NettopSource {
     private let newline = Data([0x0A])
     private let lock = NSLock()
     private var latest: [Int32: Sample] = [:]
+    /// The process block being read: nettop prints a process row, then its
+    /// connections. It is published only once the block ends, so a snapshot
+    /// never sees a process with half its connections — a connection missing
+    /// from one snapshot would be counted again in full on the next.
+    private var pending: Sample?
     private var watchdogWorkItem: DispatchWorkItem?
     /// Diagnostics for the watchdog, all guarded by `lock`: whether nettop
     /// wrote anything at all, the first few lines verbatim (so an unexpected
@@ -72,6 +99,7 @@ final class NettopSampler: NettopSource {
         lock.lock()
         buffer = Data()
         latest = [:]
+        pending = nil
         sawAnyOutput = false
         firstLines = []
         stderrBuffer = Data()
@@ -90,10 +118,14 @@ final class NettopSampler: NettopSource {
         p.executableURL = URL(fileURLWithPath: "/usr/bin/script")
         // nettop is resolved via PATH rather than a hardcoded /usr/bin or
         // /usr/sbin — both are plausible and this avoids guessing wrong.
-        // -P process mode, -x non-interactive log output, -l 0 sample
-        // forever, -s 1 once per second, -J restrict columns.
+        // No -P: every process row is followed by its connections, which is
+        // what gives exact bytes per remote host. -n keeps remotes as
+        // addresses (nettop's own lookups swapped a connection's IP for a
+        // name between samples, which would read as a new connection); they
+        // are resolved separately. -x non-interactive log output, -l 0
+        // sample forever, -s 1 once per second, -J restrict columns.
         p.arguments = ["-q", "/dev/null",
-                       "/usr/bin/env", "nettop", "-P", "-x", "-l", "0", "-s", "1", "-J", "bytes_in,bytes_out"]
+                       "/usr/bin/env", "nettop", "-n", "-x", "-l", "0", "-s", "1", "-J", "bytes_in,bytes_out"]
 
         let out = Pipe()
         let err = Pipe()
@@ -230,23 +262,79 @@ final class NettopSampler: NettopSource {
         let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return }
 
-        lock.lock()
+        lock.lock(); defer { lock.unlock() }
         sawAnyOutput = true
         if firstLines.count < 3 { firstLines.append(String(raw.prefix(120))) }
-        lock.unlock()
-
-        guard let row = Self.parseRow(raw) else { return }
-
-        lock.lock()
-        latest[row.pid] = Sample(pid: row.pid,
-                                 command: row.command,
-                                 bytesInCumKB: row.bytesIn / 1024,
-                                 bytesOutCumKB: row.bytesOut / 1024)
-        parsedAnyRow = true
-        lock.unlock()
+        switch Self.parseLine(line) {
+        case .connection(let key, let connection):
+            pending?.connections[key] = connection
+        case .process(let row):
+            commitPending()
+            pending = Sample(pid: row.pid,
+                             command: row.command,
+                             bytesInCumKB: row.bytesIn / 1024,
+                             bytesOutCumKB: row.bytesOut / 1024)
+            parsedAnyRow = true
+        case .other:
+            // The header nettop reprints before every sample.
+            commitPending()
+        }
     }
 
-    struct Row {
+    /// Caller holds `lock`.
+    private func commitPending() {
+        guard let sample = pending else { return }
+        latest[sample.pid] = sample
+        pending = nil
+    }
+
+    enum Line: Equatable {
+        case process(Row)
+        case connection(key: String, Connection)
+        case other
+    }
+
+    /// Classifies one line of per-connection output:
+    ///
+    ///     Google Chrome H.1836                    9087000          372112
+    ///        tcp4 192.168.1.5:49753<->142.250.1.1:443   19025   20590
+    ///        udp6 *.5353<->*.*
+    ///
+    /// Connection rows are indented and name a protocol and `local<->remote`;
+    /// a connection with no traffic yet may have no counters at all.
+    static func parseLine(_ line: String) -> Line {
+        let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return .other }
+        let tokens = raw.split(whereSeparator: \.isWhitespace).map(String.init)
+        if tokens.count >= 2, tokens[0].hasPrefix("tcp") || tokens[0].hasPrefix("udp"),
+           let arrow = tokens[1].range(of: "<->") {
+            let remote = splitEndpoint(String(tokens[1][arrow.upperBound...]))
+            var bytesIn = 0.0, bytesOut = 0.0
+            if tokens.count >= 4, let i = Double(tokens[tokens.count - 2]), let o = Double(tokens[tokens.count - 1]) {
+                bytesIn = i
+                bytesOut = o
+            }
+            return .connection(key: tokens[0] + " " + tokens[1],
+                               Connection(remoteHost: remote.host, remotePort: remote.port,
+                                          bytesIn: bytesIn, bytesOut: bytesOut))
+        }
+        if let row = parseRow(raw) { return .process(row) }
+        return .other
+    }
+
+    /// nettop writes IPv4 as `addr:port` but IPv6 as `addr.port` (no
+    /// brackets), and an unconnected end as `*:*` or `*.*`.
+    static func splitEndpoint(_ endpoint: String) -> (host: String, port: Int?) {
+        let colons = endpoint.filter { $0 == ":" }.count
+        let separator: Character = colons == 1 ? ":" : "."
+        guard let cut = endpoint.lastIndex(of: separator) else { return (endpoint, nil) }
+        var host = String(endpoint[..<cut])
+        // Link-local scope ("fe80::1%en0") means nothing to a lookup.
+        if let percent = host.firstIndex(of: "%") { host = String(host[..<percent]) }
+        return (host.isEmpty ? "*" : host, Int(endpoint[endpoint.index(after: cut)...]))
+    }
+
+    struct Row: Equatable {
         let command: String
         let pid: Int32
         let bytesIn: Double
