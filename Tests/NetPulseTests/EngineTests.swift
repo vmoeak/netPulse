@@ -121,6 +121,21 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(site.totalDownKB, 30, accuracy: 0.001)
     }
 
+    func testAConnectionSampledWithoutCountersIsNotCountedTwice() throws {
+        let pid = try livePID()
+        let start = Date()
+        engine.ingestFlows(flows(pid, "alpha", downKB: 10, connections: ["a": ("192.0.2.10", 10)]), at: start)
+        // One sample prints the row without its counters.
+        engine.ingestFlows(flows(pid, "alpha", downKB: 20, connections: ["a": ("192.0.2.10", 0)]),
+                           at: start.addingTimeInterval(3))
+        engine.ingestFlows(flows(pid, "alpha", downKB: 40, connections: ["a": ("192.0.2.10", 40)]),
+                           at: start.addingTimeInterval(6))
+        feed(pid, "alpha", downKB: 0)
+        engine.tick()
+        let host = try XCTUnwrap(app("proc.alpha")?.domains.first { $0.host == "192.0.2.10" })
+        XCTAssertEqual(host.totalDownKB, 30, accuracy: 0.001)
+    }
+
     func testHostsDisappearWhenProcessClosesItsSockets() throws {
         let pid = try livePID()
         feed(pid, "alpha", downKB: 0)

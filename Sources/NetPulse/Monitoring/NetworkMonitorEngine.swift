@@ -745,8 +745,28 @@ final class NetworkMonitorEngine: ObservableObject {
     /// bytes since the previous sample go into its hosts' totals, and the
     /// rate and open connections per host are kept for the rows until the
     /// next sample.
-    func ingestFlows(_ flows: [Int32: NettopSampler.Sample], at date: Date) {
+    func ingestFlows(_ newFlows: [Int32: NettopSampler.Sample], at date: Date) {
         let elapsed = previousFlowsAt.map { max(0.5, date.timeIntervalSince($0)) }
+        // Counters only grow while a connection lives, but a sample can show
+        // one lower — a row printed without its counters reads as zero — and
+        // the next sample's full value would then be counted a second time.
+        // So each counter is held at the highest value seen.
+        var flows = newFlows
+        for (pid, sample) in newFlows {
+            guard let old = previousFlows[pid] else { continue }
+            var held = NettopSampler.Sample(pid: pid, command: sample.command,
+                                            bytesInCumKB: max(sample.bytesInCumKB, old.bytesInCumKB),
+                                            bytesOutCumKB: max(sample.bytesOutCumKB, old.bytesOutCumKB))
+            held.connections = sample.connections
+            for (key, conn) in sample.connections {
+                guard let prev = old.connections[key] else { continue }
+                held.connections[key] = NettopSampler.Connection(
+                    remoteHost: conn.remoteHost, remotePort: conn.remotePort,
+                    bytesIn: max(conn.bytesIn, prev.bytesIn), bytesOut: max(conn.bytesOut, prev.bytesOut),
+                    localPort: conn.localPort)
+            }
+            flows[pid] = held
+        }
         var byApp: [String: AppFlows] = [:]
         var remoteIPs: Set<String> = []
         for (pid, sample) in flows {
