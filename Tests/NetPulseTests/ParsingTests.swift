@@ -53,6 +53,7 @@ final class ParsingTests: XCTestCase {
         XCTAssertEqual(snapshot.listeners[7890]?.pid, 456)
         XCTAssertEqual(snapshot.listeners[7890]?.command, "ClashX Pro")
         XCTAssertNil(snapshot.listeners[5353], "UDP sockets are not listeners")
+        XCTAssertEqual(snapshot.loopbackClients[50000]?.pid, 123, "the proxy's peer port names Safari")
     }
 }
 

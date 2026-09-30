@@ -44,6 +44,13 @@ final class NetworkMonitorEngine: ObservableObject {
     private var latestConnections: [Int32: ConnectionInfo] = [:]
     /// Who is listening on which port, so a loopback peer can be named.
     private var latestListeners: [Int: ListenerInfo] = [:]
+    /// Client end of each loopback connection, by its ephemeral port.
+    private var latestLoopbackClients: [Int: ListenerInfo] = [:]
+    /// Names for "forward:<app id>" endpoints, kept after the app's
+    /// connections close so their totals keep their label.
+    private var forwardedAppNames: [String: String] = [:]
+    /// Apps other apps reach through a loopback listener; set each tick.
+    private var proxyAppIDs: Set<String> = []
     /// Resolved hostnames for remote IPs seen so far.
     private var resolvedHosts: [String: String] = [:]
     /// IPs with a reverse lookup already under way, so an lsof pass that
@@ -250,12 +257,15 @@ final class NetworkMonitorEngine: ObservableObject {
             ?? apps.first
     }
 
+    /// Apps whose traffic is their own, not forwarded for another app.
+    private var countedApps: [AppUsage] { apps.filter { !$0.isProxy } }
+
     var topApp: AppUsage? {
-        apps.max(by: { ($0.rateDownKBps + $0.rateUpKBps) < ($1.rateDownKBps + $1.rateUpKBps) })
+        countedApps.max(by: { ($0.rateDownKBps + $0.rateUpKBps) < ($1.rateDownKBps + $1.rateUpKBps) })
     }
 
     var popoverList: [AppUsage] {
-        let sorted = apps.sorted { ($0.rateDownKBps + $0.rateUpKBps) > ($1.rateDownKBps + $1.rateUpKBps) }
+        let sorted = countedApps.sorted { ($0.rateDownKBps + $0.rateUpKBps) > ($1.rateDownKBps + $1.rateUpKBps) }
         return Array(sorted.dropFirst().prefix(4))
     }
 
@@ -285,7 +295,8 @@ final class NetworkMonitorEngine: ObservableObject {
         let names = Dictionary(apps.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         for (appID, hosts) in hostTotals {
             guard let appName = names[appID] else { continue }
-            for (key, totals) in hosts {
+            // A proxy's "为 X 转发" rows are apps, not domains.
+            for (key, totals) in hosts where !key.hasPrefix(Self.forwardPrefix) {
                 let (host, kind) = describe(endpoint: key)
                 var rollup = byHost[host] ?? DomainRollup(host: host, kind: kind, rateDownKBps: 0,
                                                           totalDownKB: 0, totalUpKB: 0,
@@ -307,8 +318,9 @@ final class NetworkMonitorEngine: ObservableObject {
             .sorted { ($0.totalDownKB, $0.rateDownKBps) > ($1.totalDownKB, $1.rateDownKBps) }
     }
 
-    var totalDownKBps: Double { apps.reduce(0) { $0 + $1.rateDownKBps } }
-    var totalUpKBps: Double { apps.reduce(0) { $0 + $1.rateUpKBps } }
+    // A proxy's bytes are the apps' bytes again, on their way out.
+    var totalDownKBps: Double { countedApps.reduce(0) { $0 + $1.rateDownKBps } }
+    var totalUpKBps: Double { countedApps.reduce(0) { $0 + $1.rateUpKBps } }
     /// The sidebar meters read against the last minute's peak rather than a
     /// fixed line speed, which was wrong for any connection but one. The
     /// 1 MB/s floor keeps a trickle from filling the bar.
@@ -329,6 +341,7 @@ final class NetworkMonitorEngine: ObservableObject {
         // on screen indefinitely.
         latestConnections = Dictionary(infos.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         latestListeners = snapshot.listeners
+        latestLoopbackClients = snapshot.loopbackClients
         // Loopback peers are deliberately not resolved: reverse DNS answers
         // "localhost" for all of them, which is exactly the useless label the
         // listener lookup exists to replace.
@@ -386,6 +399,7 @@ final class NetworkMonitorEngine: ObservableObject {
         }
         previousSamples = samples
 
+        proxyAppIDs = findProxyApps()
         var next: [String: AppUsage] = [:]
         for (id, agg) in aggregates {
             next[id] = buildUsage(id: id, agg: agg)
@@ -519,7 +533,8 @@ final class NetworkMonitorEngine: ObservableObject {
     private func buildUsage(id: String, agg: Aggregate) -> AppUsage {
         var usage = apps.first(where: { $0.id == id })
             ?? newUsage(id: id, name: agg.name, bundleID: agg.bundleID, statusHint: agg.statusHint)
-        usage.statusLine = agg.statusHint
+        usage.isProxy = proxyAppIDs.contains(id)
+        usage.statusLine = usage.isProxy ? "本机代理 · 不计入合计" : agg.statusHint
         usage.isPaused = false
         usage.rateDownKBps = agg.downKBps
         usage.rateUpKBps = agg.upKBps
@@ -527,14 +542,14 @@ final class NetworkMonitorEngine: ObservableObject {
         usage.upHistory = Array((usage.upHistory + [agg.upKBps]).suffix(60))
 
         var hostConnCounts: [String: Int] = [:]
-        var loopbackConnCounts: [Int: Int] = [:]
+        var loopbackConnCounts: [String: Int] = [:]
         for pid in agg.pids {
             guard let info = latestConnections[pid] else { continue }
             for (ip, count) in info.remoteCounts {
                 hostConnCounts[ip, default: 0] += count
             }
             for (port, count) in info.loopbackCounts {
-                loopbackConnCounts[port, default: 0] += count
+                loopbackConnCounts[loopbackEndpoint(port: port, appID: id), default: 0] += count
             }
         }
         usage.connectionCount = hostConnCounts.values.reduce(0, +)
@@ -560,8 +575,8 @@ final class NetworkMonitorEngine: ObservableObject {
         }
 
         let remoteDomains = hostConnCounts.map { ip, count in domain(endpoint: ip, count: count) }
-        let loopbackDomains = loopbackConnCounts.map { port, count in
-            domain(endpoint: Self.loopbackPrefix + String(port), count: count)
+        let loopbackDomains = loopbackConnCounts.map { endpoint, count in
+            domain(endpoint: endpoint, count: count)
         }
         hostTotals[id] = appHostTotals
         // Several IPs of one service often reverse-resolve to the same name;
@@ -614,9 +629,50 @@ final class NetworkMonitorEngine: ObservableObject {
     }
 
     private static let loopbackPrefix = "localhost:"
+    private static let forwardPrefix = "forward:"
+
+    /// Endpoint key for a loopback connection to `port`. Seen from a local
+    /// proxy, the far end is some app's ephemeral port — one row per port,
+    /// dozens of them, each meaningless. Those fold into one row per app
+    /// the proxy is forwarding for.
+    private func loopbackEndpoint(port: Int, appID: String) -> String {
+        if latestListeners[port] == nil, let client = latestLoopbackClients[port] {
+            let app = identify(pid: client.pid, command: client.command)
+            if app.id != appID {
+                forwardedAppNames[app.id] = app.name
+                return Self.forwardPrefix + app.id
+            }
+        }
+        return Self.loopbackPrefix + String(port)
+    }
+
+    /// Apps listening on loopback that at least two other apps connect to:
+    /// a local proxy (Shadowrocket, Clash, …) rather than a dev server one
+    /// browser is talking to.
+    private func findProxyApps() -> Set<String> {
+        var clientsByListener: [Int32: Set<String>] = [:]
+        for info in latestConnections.values {
+            let client = identify(pid: info.pid, command: info.command).id
+            for port in info.loopbackCounts.keys {
+                guard let listener = latestListeners[port], listener.pid != info.pid else { continue }
+                clientsByListener[listener.pid, default: []].insert(client)
+            }
+        }
+        var proxies: Set<String> = []
+        for (pid, clients) in clientsByListener {
+            guard let command = latestListeners.values.first(where: { $0.pid == pid })?.command else { continue }
+            let proxy = identify(pid: pid, command: command).id
+            if clients.subtracting([proxy]).count >= 2 { proxies.insert(proxy) }
+        }
+        return proxies
+    }
 
     /// Display name and kind for an endpoint key from `hostTotals`.
     private func describe(endpoint: String) -> (host: String, kind: String) {
+        if endpoint.hasPrefix(Self.forwardPrefix) {
+            let appID = String(endpoint.dropFirst(Self.forwardPrefix.count))
+            return ("为 \(forwardedAppNames[appID] ?? appID) 转发", "本机代理转发")
+        }
         if endpoint.hasPrefix(Self.loopbackPrefix),
            let port = Int(endpoint.dropFirst(Self.loopbackPrefix.count)) {
             // A machine running a local proxy sends most of a browser's
@@ -631,7 +687,10 @@ final class NetworkMonitorEngine: ObservableObject {
 
     private func loopbackPeerLabel(port: Int) -> String {
         guard let listener = latestListeners[port] else { return "本机进程" }
-        return "本机 · \(identify(pid: listener.pid, command: listener.command).name)"
+        let peer = identify(pid: listener.pid, command: listener.command)
+        // Through a proxy only the proxy knows the real site.
+        if proxyAppIDs.contains(peer.id) { return "经本机代理 \(peer.name)，真实网站只有代理知道" }
+        return "本机 · \(peer.name)"
     }
 
     private func resort() {

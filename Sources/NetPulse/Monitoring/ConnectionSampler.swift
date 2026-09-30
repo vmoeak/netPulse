@@ -24,6 +24,10 @@ struct ListenerInfo {
 struct ConnectionSnapshot {
     let connections: [ConnectionInfo]
     let listeners: [Int: ListenerInfo]
+    /// The process on the client end of each loopback connection, by its
+    /// local (ephemeral) port. A local proxy's sockets point at these
+    /// ports, and this is what names the app it is forwarding for.
+    var loopbackClients: [Int: ListenerInfo] = [:]
 }
 
 /// `Result`'s failure type has to conform to `Error`, so the human-readable
@@ -119,6 +123,7 @@ final class ConnectionSampler {
     static func parse(_ text: String) -> ConnectionSnapshot {
         var result: [ConnectionInfo] = []
         var listeners: [Int: ListenerInfo] = [:]
+        var loopbackClients: [Int: ListenerInfo] = [:]
         var pid: Int32?
         var command = ""
         var remoteCounts: [String: Int] = [:]
@@ -154,6 +159,9 @@ final class ConnectionSampler {
                 if let peer = remotePeer(fromLsofName: value) {
                     if isLoopback(peer.host), let port = peer.port {
                         loopbackCounts[port, default: 0] += 1
+                        if let pid, let local = localPort(fromLsofName: value), loopbackClients[local] == nil {
+                            loopbackClients[local] = ListenerInfo(pid: pid, command: command)
+                        }
                     } else {
                         remoteCounts[peer.host, default: 0] += 1
                     }
@@ -169,7 +177,12 @@ final class ConnectionSampler {
             }
         }
         flush()
-        return ConnectionSnapshot(connections: result, listeners: listeners)
+        return ConnectionSnapshot(connections: result, listeners: listeners, loopbackClients: loopbackClients)
+    }
+
+    private static func localPort(fromLsofName name: String) -> Int? {
+        guard let arrowRange = name.range(of: "->") else { return nil }
+        return splitHostPort(String(name[..<arrowRange.lowerBound]))?.port
     }
 
     /// lsof's `n` field for a connected socket looks like

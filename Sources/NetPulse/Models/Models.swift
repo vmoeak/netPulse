@@ -143,6 +143,9 @@ struct AppUsage: Identifiable, Equatable {
     /// False for a row rebuilt from saved history for an app that hasn't
     /// run this launch — it has totals but no rates, hosts or pause control.
     var isLive: Bool = true
+    /// A local proxy other apps connect through. What it moves is those
+    /// apps' traffic a second time, so machine totals leave it out.
+    var isProxy: Bool = false
 
     var meta: String { isLive ? "\(statusLine) · \(connectionCount) 个连接" : statusLine }
 
@@ -158,5 +161,6 @@ struct AppUsage: Identifiable, Equatable {
             && lhs.domains == rhs.domains
             && lhs.isPaused == rhs.isPaused
             && lhs.isLive == rhs.isLive
+            && lhs.isProxy == rhs.isProxy
     }
 }

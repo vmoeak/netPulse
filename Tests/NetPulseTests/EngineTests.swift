@@ -231,4 +231,37 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(Set(engine.listedApps.map(\.id)), ["proc.busy", "proc.idled"])
         XCTAssertEqual(engine.hiddenIdleCount, 0)
     }
+
+    /// Chrome and Code reach the net through a local proxy on 1082: the
+    /// proxy's dozens of ephemeral-port rows fold into one per app, and its
+    /// bytes (theirs, forwarded) stay out of the machine totals.
+    func testLocalProxyRowsFoldPerAppAndStayOutOfTotals() throws {
+        let proxy = try livePID(), chrome = try livePID(), code = try livePID()
+        for (pid, name) in [(proxy, "tunnel"), (chrome, "chrome"), (code, "code")] { feed(pid, name, downKB: 0) }
+        engine.ingestConnections(ConnectionSnapshot(
+            connections: [
+                ConnectionInfo(pid: chrome, command: "chrome", remoteCounts: [:], loopbackCounts: [1082: 2]),
+                ConnectionInfo(pid: code, command: "code", remoteCounts: [:], loopbackCounts: [1082: 1]),
+                ConnectionInfo(pid: proxy, command: "tunnel", remoteCounts: ["192.0.2.1": 3],
+                               loopbackCounts: [51001: 1, 51002: 1, 51003: 1]),
+            ],
+            listeners: [1082: ListenerInfo(pid: proxy, command: "tunnel")],
+            loopbackClients: [51001: ListenerInfo(pid: chrome, command: "chrome"),
+                              51002: ListenerInfo(pid: chrome, command: "chrome"),
+                              51003: ListenerInfo(pid: code, command: "code")]))
+        engine.tick()
+        feed(chrome, "chrome", downKB: 100)
+        feed(code, "code", downKB: 50)
+        feed(proxy, "tunnel", downKB: 150)
+        engine.tick()
+
+        let tunnel = try XCTUnwrap(app("proc.tunnel"))
+        XCTAssertTrue(tunnel.isProxy)
+        XCTAssertEqual(Set(tunnel.domains.map(\.host)), ["192.0.2.1", "为 chrome 转发", "为 code 转发"])
+        XCTAssertEqual(tunnel.domains.first { $0.host == "为 chrome 转发" }?.connectionCount, 2)
+        XCTAssertEqual(engine.totalDownKBps, 150, accuracy: 0.001, "the proxy's forwarded bytes are not counted twice")
+        XCTAssertEqual(engine.topApp?.id, "proc.chrome")
+        XCTAssertFalse(engine.domainRollups.contains { $0.host.hasPrefix("为 ") })
+        XCTAssertEqual(app("proc.chrome")?.domains.first?.host, "localhost:1082")
+    }
 }
