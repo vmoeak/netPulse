@@ -20,7 +20,17 @@ import Foundation
 /// no row of which was recognizable (in which case the message quotes the
 /// first line, so the real format can be read off the UI) — and a nettop
 /// that dies on startup reports its own stderr instead.
-final class NettopSampler {
+/// What the engine needs from a per-process byte counter source — the real
+/// `NettopSampler`, or canned samples in tests.
+protocol NettopSource: AnyObject {
+    var onStatusChange: ((MonitoringStatus) -> Void)? { get set }
+    func start()
+    func stop()
+    func snapshot() -> [Int32: NettopSampler.Sample]
+    func forget(pids: Set<Int32>)
+}
+
+final class NettopSampler: NettopSource {
     struct Sample {
         let pid: Int32
         let command: String
@@ -224,7 +234,7 @@ final class NettopSampler {
         lock.unlock()
     }
 
-    private struct Row {
+    struct Row {
         let command: String
         let pid: Int32
         let bytesIn: Double
@@ -234,7 +244,7 @@ final class NettopSampler {
     /// Whitespace is the real separator; the comma path is kept because
     /// nettop's logging mode does emit CSV in some invocations, and splitting
     /// on the wrong one silently yields a single unparsable cell.
-    private static func parseRow(_ raw: String) -> Row? {
+    static func parseRow(_ raw: String) -> Row? {
         if raw.contains(",") {
             let fields = raw.components(separatedBy: ",")
             guard let (command, pid) = processCell(in: fields) else { return nil }

@@ -29,10 +29,11 @@ final class HistoryStore {
     private var saveTimer: Timer?
     private var terminationObserver: NSObjectProtocol?
 
-    init() {
+    /// `directory` is for tests; the app stores under Application Support.
+    init(directory: URL? = nil) {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        let dir = base.appendingPathComponent("NetPulse", isDirectory: true)
+        let dir = directory ?? base.appendingPathComponent("NetPulse", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         fileURL = dir.appendingPathComponent("history.json")
         namesURL = dir.appendingPathComponent("app-names.json")

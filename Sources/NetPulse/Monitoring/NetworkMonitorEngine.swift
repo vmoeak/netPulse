@@ -25,10 +25,10 @@ final class NetworkMonitorEngine: ObservableObject {
     /// that was quit before NetPulse started.
     @Published private(set) var archivedApps: [AppUsage] = []
 
-    private let nettop = NettopSampler()
-    private let connections = ConnectionSampler()
+    private let nettop: NettopSource
+    private let connections: ConnectionSampler
     private let dns = ReverseDNSResolver()
-    private let history = HistoryStore()
+    private let history: HistoryStore
 
     /// Per-pid cumulative counters from the previous tick, to derive deltas.
     private var previousSamples: [Int32: NettopSampler.Sample] = [:]
@@ -52,11 +52,25 @@ final class NetworkMonitorEngine: ObservableObject {
     private var hostTotals: [String: [String: HostTotals]] = [:]
     /// Apps the user excluded from counting. Persisted, so a pause outlives
     /// the app relaunching (or NetPulse restarting).
-    private var pausedIDs: Set<String> = Set(UserDefaults.standard.stringArray(forKey: pausedAppsDefaultsKey) ?? [])
+    private var pausedIDs: Set<String>
+    private let defaults: UserDefaults
     private var tickCount = 0
 
     private var tickTimer: Timer?
     private var hasStarted = false
+
+    /// Parameters exist for tests, which drive `tick()` and
+    /// `ingestConnections(_:)` directly with canned data.
+    init(nettop: NettopSource = NettopSampler(),
+         connections: ConnectionSampler = ConnectionSampler(),
+         history: HistoryStore = HistoryStore(),
+         defaults: UserDefaults = .standard) {
+        self.nettop = nettop
+        self.connections = connections
+        self.history = history
+        self.defaults = defaults
+        pausedIDs = Set(defaults.stringArray(forKey: pausedAppsDefaultsKey) ?? [])
+    }
 
     /// Idempotent — safe to call from multiple view lifecycle hooks (the
     /// menu bar label appears at launch; the main window may appear later
@@ -80,6 +94,7 @@ final class NetworkMonitorEngine: ObservableObject {
         }
         nettop.start()
         connections.start()
+        scheduleSelfTestIfRequested()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             // Timer's block is `@Sendable`, so the `weak self` capture reads as a
             // mutable var there — binding it to an immutable `self` first is what
@@ -87,6 +102,54 @@ final class NetworkMonitorEngine: ObservableObject {
             guard let self else { return }
             Task { @MainActor in self.tick() }
         }
+    }
+
+    /// `NETPULSE_SELFTEST_SECONDS=N` makes the app print `selfTestReport()`
+    /// to stdout after N seconds and quit — how CI checks the real
+    /// nettop/lsof pipeline on a real Mac, where nobody can look at the UI.
+    private func scheduleSelfTestIfRequested() {
+        guard let raw = ProcessInfo.processInfo.environment["NETPULSE_SELFTEST_SECONDS"],
+              let seconds = Double(raw), seconds > 0 else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            FileHandle.standardOutput.write(self.selfTestReport())
+            FileHandle.standardOutput.write(Data("\n".utf8))
+            self.stop()
+            exit(0)
+        }
+    }
+
+    /// What the engine is showing right now, as JSON.
+    func selfTestReport() -> Data {
+        let statusText: String
+        switch status {
+        case .starting: statusText = "starting"
+        case .ok: statusText = "ok"
+        case .degraded(let message): statusText = "degraded: \(message)"
+        case .unavailable(let message): statusText = "unavailable: \(message)"
+        }
+        let appRows: [[String: Any]] = apps.map { app in
+            [
+                "id": app.id,
+                "name": app.name,
+                "status": app.statusLine,
+                "rateDownKBps": app.rateDownKBps,
+                "rateUpKBps": app.rateUpKBps,
+                "todayDownKB": app.totalDownKB[.today] ?? 0,
+                "todayUpKB": app.totalUpKB[.today] ?? 0,
+                "connections": app.connectionCount,
+                "hosts": app.domains.map(\.host),
+            ]
+        }
+        let report: [String: Any] = [
+            "status": statusText,
+            "totalDownKBps": totalDownKBps,
+            "totalUpKBps": totalUpKBps,
+            "apps": appRows,
+            "domainRollups": domainRollups.map(\.host),
+            "archivedApps": archivedApps.map(\.id),
+        ]
+        return (try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])) ?? Data()
     }
 
     func stop() {
@@ -103,7 +166,7 @@ final class NetworkMonitorEngine: ObservableObject {
 
     func togglePause(appID: String) {
         if pausedIDs.contains(appID) { pausedIDs.remove(appID) } else { pausedIDs.insert(appID) }
-        UserDefaults.standard.set(Array(pausedIDs), forKey: pausedAppsDefaultsKey)
+        defaults.set(Array(pausedIDs), forKey: pausedAppsDefaultsKey)
         if let idx = apps.firstIndex(where: { $0.id == appID }) {
             apps[idx].isPaused = pausedIDs.contains(appID)
         }
@@ -208,7 +271,7 @@ final class NetworkMonitorEngine: ObservableObject {
 
     // MARK: - Sampling
 
-    private func ingestConnections(_ snapshot: ConnectionSnapshot) {
+    func ingestConnections(_ snapshot: ConnectionSnapshot) {
         let infos = snapshot.connections
         // Replaced wholesale, not merged: lsof leaves out a process that has
         // closed its last socket, and merging kept that process's old hosts
@@ -233,7 +296,7 @@ final class NetworkMonitorEngine: ObservableObject {
         }
     }
 
-    private func tick() {
+    func tick() {
         tickCount += 1
         if tickCount % 5 == 0 { forgetExitedProcesses() }
 

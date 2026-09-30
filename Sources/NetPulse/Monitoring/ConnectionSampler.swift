@@ -116,7 +116,7 @@ final class ConnectionSampler {
         return .success(parse(text))
     }
 
-    private static func parse(_ text: String) -> ConnectionSnapshot {
+    static func parse(_ text: String) -> ConnectionSnapshot {
         var result: [ConnectionInfo] = []
         var listeners: [Int: ListenerInfo] = [:]
         var pid: Int32?
