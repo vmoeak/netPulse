@@ -15,6 +15,11 @@ import Darwin
 /// no data, and while NetPulse isn't reading, the daemon waits to open it
 /// and captures nothing.
 ///
+/// The FIFO lives in a root-owned directory the daemon (re)creates each
+/// start. In the user's home, any program of the user's could have swapped
+/// it for a symlink, and root's `>` would have overwritten whatever system
+/// file it pointed at.
+///
 /// What NetPulse keeps is the client's source port → site, in memory; the
 /// per-connection nettop counters for that port then give the site's bytes.
 final class ProxyHostCapture {
@@ -24,21 +29,18 @@ final class ProxyHostCapture {
     /// Called on the main queue with newly seen source port → host pairs.
     var onHosts: (([Int: String]) -> Void)?
 
-    private let fifoURL: URL
+    static let directory = "/var/run/netpulse"
+    static let fifoPath = directory + "/proxy-hosts.fifo"
+
     private var reader: Thread?
     private var stopped = true
-
-    init(directory: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("NetPulse", isDirectory: true)) {
-        fifoURL = directory.appendingPathComponent("proxy-hosts.fifo")
-    }
 
     static var isInstalled: Bool { FileManager.default.fileExists(atPath: plistPath) }
 
     func start() {
-        guard Self.isInstalled, reader == nil, (try? makeFIFO()) != nil else { return }
+        guard Self.isInstalled, reader == nil else { return }
         stopped = false
-        let path = fifoURL.path
+        let path = Self.fifoPath
         let thread = Thread { [weak self] in self?.readLoop(path: path) }
         thread.name = "NetPulse.proxyHostCapture"
         thread.qualityOfService = .utility
@@ -51,31 +53,14 @@ final class ProxyHostCapture {
         reader = nil
     }
 
-    /// Creates the FIFO the daemon writes into: owned by this user, mode 600,
-    /// so other accounts on the Mac can't read what sites were visited.
-    private func makeFIFO() throws {
-        let fm = FileManager.default
-        try fm.createDirectory(at: fifoURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        var info = stat()
-        if lstat(fifoURL.path, &info) == 0 {
-            if (info.st_mode & S_IFMT) == S_IFIFO, info.st_uid == getuid() {
-                chmod(fifoURL.path, 0o600)
-                return
-            }
-            try fm.removeItem(at: fifoURL)
-        }
-        guard mkfifo(fifoURL.path, 0o600) == 0 else {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-        }
-    }
-
     private func readLoop(path: String) {
         var parser = TcpdumpConnectParser()
         var buffer = [UInt8](repeating: 0, count: 16 * 1024)
         var pending = Data()
         while !stopped {
-            // Blocks until the daemon opens its end.
-            let fd = open(path, O_RDONLY)
+            // Blocks until the daemon opens its end; before the daemon has
+            // created the FIFO, fails and is retried.
+            let fd = open(path, O_RDONLY | O_NOFOLLOW)
             guard fd >= 0 else { Thread.sleep(forTimeInterval: 5); continue }
             while !stopped {
                 let n = read(fd, &buffer, buffer.count)
@@ -109,12 +94,18 @@ final class ProxyHostCapture {
     func daemonPlist() -> Data {
         let plist: [String: Any] = [
             "Label": Self.label,
-            // $0 is the filter and $1 the FIFO, so neither needs quoting.
-            // The redirect blocks until NetPulse opens the FIFO; when it
-            // closes it, tcpdump dies of SIGPIPE and launchd starts it again.
-            "ProgramArguments": ["/bin/sh", "-c",
-                                 "exec /usr/sbin/tcpdump -i lo0 -n -l -x -s 400 \"$0\" > \"$1\" 2>/dev/null",
-                                 Self.filter, fifoURL.path],
+            // $0 is the filter, $1 the directory, $2 the FIFO and $3 the
+            // user's uid, so none of them needs quoting. The directory is
+            // root's (/var/run is emptied at boot, hence every start), and
+            // a FIFO that isn't one is replaced. The redirect blocks until
+            // NetPulse opens the FIFO; when it closes it, tcpdump dies of
+            // SIGPIPE and launchd starts this again.
+            "ProgramArguments": ["/bin/sh", "-c", """
+                /bin/mkdir -p "$1" && /usr/sbin/chown root:wheel "$1" && /bin/chmod 755 "$1" || exit 1
+                if [ -L "$2" ] || [ ! -p "$2" ]; then /bin/rm -rf "$2"; /usr/bin/mkfifo -m 600 "$2" || exit 1; fi
+                /usr/sbin/chown "$3" "$2" && /bin/chmod 600 "$2" || exit 1
+                exec /usr/sbin/tcpdump -i lo0 -n -l -x -s 400 "$0" > "$2" 2>/dev/null
+                """, Self.filter, Self.directory, Self.fifoPath, String(getuid())],
             "KeepAlive": true,
             "RunAtLoad": true,
             "ThrottleInterval": 5,
@@ -126,7 +117,6 @@ final class ProxyHostCapture {
     /// The plist goes in as base64 inside the privileged command itself, so
     /// there is no user-writable file for root to pick up.
     func install() -> String? {
-        do { try makeFIFO() } catch { return "无法创建管道：\(error.localizedDescription)" }
         let b64 = daemonPlist().base64EncodedString()
         let command = [
             "echo \(b64) | /usr/bin/base64 -D > \(Self.plistPath)",
@@ -141,7 +131,7 @@ final class ProxyHostCapture {
 
     func uninstall() -> String? {
         stop()
-        let command = "/bin/launchctl bootout system/\(Self.label) 2>/dev/null; /bin/rm -f \(Self.plistPath)"
+        let command = "/bin/launchctl bootout system/\(Self.label) 2>/dev/null; /bin/rm -f \(Self.plistPath); /bin/rm -rf \(Self.directory)"
         return Self.runAsAdmin(command, prompt: "NetPulse 要移除代理网站统计服务。")
     }
 
