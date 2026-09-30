@@ -30,10 +30,15 @@ final class NetworkMonitorEngine: ObservableObject {
     /// under 累计流量, where 本周/本月 would otherwise leave out everything
     /// that was quit before NetPulse started.
     @Published private(set) var archivedApps: [AppUsage] = []
+    /// Sites from the local proxy's log, by UA product (see ProxyLogReader).
+    @Published private(set) var proxyVisitsByProduct: [String: [String: ProxyVisit]] = [:]
 
     private let nettop: NettopSource
     private let connections: ConnectionSampler
     private let dns = ReverseDNSResolver()
+    private let proxyLog: ProxyLogReader
+    private let proxyLogQueue = DispatchQueue(label: "NetPulse.proxyLog", qos: .utility)
+    private var proxyLogReadInFlight = false
     private let history: HistoryStore
 
     /// Per-pid cumulative counters from the previous tick, to derive deltas.
@@ -82,8 +87,10 @@ final class NetworkMonitorEngine: ObservableObject {
          connections: ConnectionSampler = ConnectionSampler(),
          history: HistoryStore = HistoryStore(),
          defaults: UserDefaults = .standard,
+         proxyLog: ProxyLogReader = ProxyLogReader(),
          identify: @escaping (Int32, String) -> ProcessDirectory.Identity = ProcessDirectory.identify) {
         self.identifyProcess = identify
+        self.proxyLog = proxyLog
         self.nettop = nettop
         self.connections = connections
         self.history = history
@@ -421,6 +428,7 @@ final class NetworkMonitorEngine: ObservableObject {
         totalDownHistory = Array((totalDownHistory + [totalDownKBps]).suffix(60))
         totalUpHistory = Array((totalUpHistory + [totalUpKBps]).suffix(60))
         if tickCount % 5 == 1 { refreshArchivedApps() }
+        if tickCount % 5 == 2, !proxyAppIDs.isEmpty { refreshProxyLog() }
         let busiest = apps.max { $0.rateDownKBps + $0.rateUpKBps < $1.rateDownKBps + $1.rateUpKBps }
             .flatMap { $0.rateDownKBps + $0.rateUpKBps > 0 ? $0 : nil }
         if let sel = selectedAppID,
@@ -454,6 +462,44 @@ final class NetworkMonitorEngine: ObservableObject {
         usage.domains = []
         usage.connectionCount = 0
         return usage
+    }
+
+    /// Reads new proxy-log rows off the main thread; only while a local
+    /// proxy is in use, since the log is only written then.
+    private func refreshProxyLog() {
+        guard !proxyLogReadInFlight else { return }
+        proxyLogReadInFlight = true
+        let reader = proxyLog
+        proxyLogQueue.async {
+            reader.refresh()
+            let visits = reader.visitsByProduct
+            DispatchQueue.main.async {
+                self.proxyLogReadInFlight = false
+                if self.proxyVisitsByProduct != visits { self.proxyVisitsByProduct = visits }
+            }
+        }
+    }
+
+    /// Sites `app` reached through the local proxy, most recent first. A
+    /// proxy's own row gets the connections its log can't tie to an app.
+    func proxyVisits(of app: AppUsage) -> [ProxyVisit] {
+        let products = app.isProxy
+            ? [ProxyLogReader.unattributed]
+            : ProxyLogReader.products(forAppID: app.id, name: app.name, in: proxyVisitsByProduct.keys)
+        var merged: [String: ProxyVisit] = [:]
+        for product in products {
+            for (host, visit) in proxyVisitsByProduct[product] ?? [:] {
+                guard var existing = merged[host] else { merged[host] = visit; continue }
+                existing.count += visit.count
+                if visit.lastSeen > existing.lastSeen {
+                    existing.lastSeen = visit.lastSeen
+                    existing.policy = visit.policy
+                    existing.rule = visit.rule
+                }
+                merged[host] = existing
+            }
+        }
+        return merged.values.sorted { ($0.lastSeen, $0.count) > ($1.lastSeen, $1.count) }
     }
 
     /// Rebuilds `archivedApps` from saved history. Every five ticks is

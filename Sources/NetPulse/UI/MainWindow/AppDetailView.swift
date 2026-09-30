@@ -153,7 +153,8 @@ struct AppDetailView: View {
             .padding(.horizontal, 10).padding(.bottom, 6)
             .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
 
-            if app.domains.isEmpty {
+            let visits = engine.proxyVisits(of: app)
+            if app.domains.isEmpty && visits.isEmpty {
                 Text(app.isLive ? "暂无活跃连接" : "本次启动后未运行，只有历史累计").font(.system(size: 12)).foregroundStyle(Theme.textTertiary).padding(.top, 16)
                 Spacer()
             } else {
@@ -162,12 +163,31 @@ struct AppDetailView: View {
                         ForEach(domains) { d in
                             DomainRow(domain: d, maxTotalDown: maxTotalDown)
                         }
+                        if !visits.isEmpty {
+                            proxyVisitsHeader(count: visits.count, isProxy: app.isProxy)
+                            ForEach(visits) { ProxyVisitRow(visit: $0) }
+                        }
                     }
                     .padding(.top, 3)
                 }
             }
         }
         .padding(.horizontal, 22)
+    }
+
+    /// The proxy's log names sites but not bytes, so these rows only say
+    /// where the app went and how often.
+    private func proxyVisitsHeader(count: Int, isProxy: Bool) -> some View {
+        HStack {
+            Text(isProxy ? "认不出 App 的代理连接 · \(count) 个网站" : "经代理访问的网站 · \(count) 个")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            Text("来自 Shadowrocket 日志，只有次数没有流量")
+                .font(.system(size: 10.5))
+                .foregroundStyle(Theme.textTertiary)
+        }
+        .padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 6)
     }
 
     private func exportReport(_ app: AppUsage) {
@@ -239,5 +259,32 @@ private struct DomainRow: View {
             }
         )
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+private struct ProxyVisitRow: View {
+    let visit: ProxyVisit
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(visit.host).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(visit.host)
+                Text(visit.rule.isEmpty ? " " : "规则 \(visit.rule)").font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(visit.policy == "DIRECT" ? "直连" : visit.policy == "PROXY" ? "代理" : visit.policy)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(visit.policy == "DIRECT" ? Theme.textSecondary : Theme.accentBlue)
+                .frame(width: 52, alignment: .trailing)
+            Text("\(visit.count) 次").frame(width: 60, alignment: .trailing).foregroundStyle(Theme.textSecondary)
+            Text(visit.lastSeen).frame(width: 72, alignment: .trailing).foregroundStyle(Theme.textSecondary)
+        }
+        .font(.system(size: 11.5))
+        .monospacedDigit()
+        .padding(.horizontal, 10).padding(.vertical, 7)
     }
 }
