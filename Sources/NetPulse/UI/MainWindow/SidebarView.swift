@@ -58,7 +58,7 @@ struct SidebarView: View {
 
     private func badgeCount(for section: SidebarSection) -> String {
         switch section {
-        case .apps: return "\(engine.apps.count)"
+        case .apps: return "\(engine.listedApps.count)"
         case .connections: return "\(engine.connectionCount)"
         case .domains: return "\(engine.domainRollups.count)"
         }
@@ -70,7 +70,8 @@ struct SidebarView: View {
             case .starting:
                 Text("正在启动监控…")
             case .ok:
-                Text("Wi‑Fi · 正在监控")
+                // nettop counts every interface, so naming one was a guess.
+                Text("正在监控")
             case .degraded(let message), .unavailable(let message):
                 Text(message).foregroundStyle(.orange)
             }

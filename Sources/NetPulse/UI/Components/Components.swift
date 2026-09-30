@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Ports the `poly()` helper from the design's JS: normalizes a value
 /// series against its own max and lays it out left-to-right. Used for the
@@ -54,14 +55,38 @@ struct IconBadge: View {
     var fontSize: CGFloat = 12
 
     var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius)
-            .fill(badge.gradient)
-            .frame(width: size, height: size)
-            .overlay(
-                Text(badge.initials)
-                    .font(.system(size: fontSize, weight: .bold))
-                    .foregroundStyle(.white)
-            )
+        if let icon = badge.bundleID.flatMap(AppIconCache.icon(for:)) {
+            // App icons carry their own shape and margin, so they're drawn
+            // slightly larger to match the squares' visual weight.
+            Image(nsImage: icon)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: size * 1.15, height: size * 1.15)
+                .frame(width: size, height: size)
+        } else {
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(badge.gradient)
+                .frame(width: size, height: size)
+                .overlay(
+                    Text(badge.initials)
+                        .font(.system(size: fontSize, weight: .bold))
+                        .foregroundStyle(.white)
+                )
+        }
+    }
+}
+
+/// Installed apps' icons by bundle ID. Looked up once per ID: rows redraw
+/// every second, and a miss (a helper with no findable bundle) is cached too.
+@MainActor enum AppIconCache {
+    private static var icons: [String: NSImage?] = [:]
+
+    static func icon(for bundleID: String) -> NSImage? {
+        if let cached = icons[bundleID] { return cached }
+        let icon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            .map { NSWorkspace.shared.icon(forFile: $0.path) }
+        icons[bundleID] = icon
+        return icon
     }
 }
 

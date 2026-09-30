@@ -31,6 +31,13 @@ let package = Package(
                     "-Xlinker", "Sources/NetPulse/Resources/Info.plist",
                 ])
             ]
-        )
+        ),
+        // Tests the parsers and NetworkMonitorEngine with canned nettop/lsof
+        // data; `scripts/check-selftest.py` covers the real tools in CI.
+        .testTarget(
+            name: "NetPulseTests",
+            dependencies: ["NetPulse"],
+            path: "Tests/NetPulseTests"
+        ),
     ]
 )

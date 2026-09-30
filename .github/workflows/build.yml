@@ -22,10 +22,44 @@ jobs:
       - name: Build (release)
         run: swift build -c release -v
 
+      - name: Unit tests
+        run: swift test
+
       - name: Package .app bundle
         run: |
           chmod +x scripts/build-app.sh
           scripts/build-app.sh release
+
+      # Runs the packaged app against the real nettop/lsof while curl makes
+      # traffic, then checks the app counted it and dropped curl's rate and
+      # hosts once curl exited. perl's alarm is the watchdog (macOS has no
+      # `timeout`), so an app that never reports fails instead of hanging.
+      - name: Smoke test the app
+        run: |
+          NETPULSE_SELFTEST_SECONDS=30 NETPULSE_SELFTEST_SNAPSHOTS="$PWD/selftest-snapshots" \
+            perl -e 'alarm 90; exec @ARGV' \
+            dist/NetPulse.app/Contents/MacOS/NetPulse > selftest.json &
+          APP=$!
+          # The same nettop invocation the app uses, logged raw, so a failed
+          # check shows what nettop actually printed for curl.
+          perl -e 'alarm 40; exec @ARGV' script -q /dev/null nettop -P -x -l 0 -s 1 -J bytes_in,bytes_out > nettop.log 2>&1 &
+          sleep 5
+          curl -sSL --limit-rate 300k --max-time 10 -o /dev/null \
+            https://download.swift.org/swift-5.10-release/xcode/swift-5.10-RELEASE/swift-5.10-RELEASE-osx.pkg || true
+          wait $APP
+          if ! python3 scripts/check-selftest.py selftest.json; then
+            echo "--- first nettop lines ---"; head -n 8 nettop.log
+            echo "--- nettop rows for curl ---"; grep -i curl nettop.log | head -n 40
+            exit 1
+          fi
+
+      - name: Upload UI self-test snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-snapshots
+          path: selftest-snapshots
+          if-no-files-found: warn
 
       # upload-artifact rewrites every file to 644/755 and would take
       # dist/NetPulse.app's *contents* as the archive root, so a downloaded

@@ -30,10 +30,16 @@ enum AppPalette {
     ]
 
     static func badge(bundleID: String, name: String) -> AppBadge {
-        if let known = knownByBundleID[bundleID] { return known }
+        // "proc." and "pid." ids are processes, not bundles.
+        let iconID = bundleID.contains(".") && !bundleID.hasPrefix("proc.") && !bundleID.hasPrefix("pid.")
+            ? bundleID : nil
+        if var known = knownByBundleID[bundleID] {
+            known.bundleID = iconID
+            return known
+        }
         let index = abs(name.hashValue) % fallbackGradients.count
         let (top, bottom) = fallbackGradients[index]
-        return AppBadge(initials: initials(for: name), colorTop: top, colorBottom: bottom)
+        return AppBadge(bundleID: iconID, initials: initials(for: name), colorTop: top, colorBottom: bottom)
     }
 
     static func initials(for name: String) -> String {

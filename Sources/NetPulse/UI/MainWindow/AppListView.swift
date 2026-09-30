@@ -16,6 +16,7 @@ struct AppListView: View {
                             .contentShape(Rectangle())
                             .onTapGesture { engine.select(appID: app.id) }
                     }
+                    idleToggle
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -69,6 +70,19 @@ struct AppListView: View {
             .shadow(color: .black.opacity(active ? 0.18 : 0), radius: 1, y: 1)
             .contentShape(Rectangle())
             .onTapGesture { engine.sortMode = mode }
+    }
+
+    @ViewBuilder private var idleToggle: some View {
+        let hidden = engine.hiddenIdleCount
+        if hidden > 0 || engine.showIdleApps {
+            Button(engine.showIdleApps ? "隐藏从未产生流量的进程" : "显示 \(hidden) 个从未产生流量的进程") {
+                engine.showIdleApps.toggle()
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.vertical, 10)
+        }
     }
 
     private var columnHeader: some View {

@@ -39,15 +39,20 @@ struct AppDetailView: View {
                 Text(app.bundleID).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
             }
             Spacer()
-            Button(app.isPaused ? "恢复该 App" : "暂停该 App") {
-                engine.togglePause(appID: app.id)
+            // Pausing only stops counting; the app's traffic is untouched,
+            // which "暂停该 App" did not make clear.
+            // A paused app that isn't running still needs a way to resume.
+            if app.isLive || app.isPaused {
+                Button(app.isPaused ? "恢复统计" : "暂停统计") {
+                    engine.togglePause(appID: app.id)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 11).padding(.vertical, 4)
+                .background(Color.black.opacity(0.055))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
-            .buttonStyle(.plain)
-            .font(.system(size: 11.5))
-            .foregroundStyle(Theme.textPrimary)
-            .padding(.horizontal, 11).padding(.vertical, 4)
-            .background(Color.black.opacity(0.055))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
 
             Button("导出报告") { exportReport(app) }
                 .buttonStyle(.plain)
@@ -96,6 +101,9 @@ struct AppDetailView: View {
                 SparklineArea(values: app.downHistory).fill(Theme.accentBlue.opacity(0.13))
                 Sparkline(values: app.downHistory).stroke(Theme.accentBlue, lineWidth: 1.8)
                 Sparkline(values: app.upHistory).stroke(Theme.upOrange, lineWidth: 1.5)
+                if peak == 0 {
+                    Text("最近 60 秒无流量").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
+                }
             }
             .frame(height: 120)
             .clipShape(RoundedRectangle(cornerRadius: 9))
@@ -113,6 +121,7 @@ struct AppDetailView: View {
 
     private func domainSection(_ app: AppUsage) -> some View {
         let maxTotalDown = app.domains.map(\.totalDownKB).max() ?? 1
+        let domains = engine.sortedDomains(of: app)
         return VStack(spacing: 0) {
             HStack {
                 Text("域名明细 · \(app.domains.count) 个主机")
@@ -126,9 +135,16 @@ struct AppDetailView: View {
 
             HStack {
                 Text("域名").frame(maxWidth: .infinity, alignment: .leading)
-                Text("实时").frame(width: 100, alignment: .trailing)
-                Text("累计下载").frame(width: 96, alignment: .trailing)
-                Text("累计上传").frame(width: 92, alignment: .trailing)
+                // Per-host rates split the app's rate by connection count;
+                // nettop reports no per-connection bytes.
+                Text("实时（估算）").frame(width: 84, alignment: .trailing)
+                    .help("按连接数平摊该 App 的实时速率得出的估算值")
+                // Host totals count from this launch, unlike the tiles above,
+                // which follow the chosen range.
+                Text("本次下载").frame(width: 80, alignment: .trailing)
+                    .help("本次启动以来经过该主机的流量")
+                Text("本次上传").frame(width: 80, alignment: .trailing)
+                    .help("本次启动以来经过该主机的流量")
                 Text("连接").frame(width: 52, alignment: .trailing)
             }
             .font(.system(size: 10, weight: .semibold))
@@ -137,14 +153,19 @@ struct AppDetailView: View {
             .padding(.horizontal, 10).padding(.bottom, 6)
             .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
 
-            if app.domains.isEmpty {
-                Text("暂无活跃连接").font(.system(size: 12)).foregroundStyle(Theme.textTertiary).padding(.top, 16)
+            let visits = engine.proxyVisits(of: app)
+            if app.domains.isEmpty && visits.isEmpty {
+                Text(app.isLive ? "暂无活跃连接" : "本次启动后未运行，只有历史累计").font(.system(size: 12)).foregroundStyle(Theme.textTertiary).padding(.top, 16)
                 Spacer()
             } else {
                 ScrollView {
                     LazyVStack(spacing: 1) {
-                        ForEach(app.domains) { d in
+                        ForEach(domains) { d in
                             DomainRow(domain: d, maxTotalDown: maxTotalDown)
+                        }
+                        if !visits.isEmpty {
+                            proxyVisitsHeader(count: visits.count, isProxy: app.isProxy)
+                            ForEach(visits) { ProxyVisitRow(visit: $0) }
                         }
                     }
                     .padding(.top, 3)
@@ -154,16 +175,60 @@ struct AppDetailView: View {
         .padding(.horizontal, 22)
     }
 
+    /// The proxy's log names sites but not bytes, so these rows only say
+    /// where the app went and how often.
+    private func proxyVisitsHeader(count: Int, isProxy: Bool) -> some View {
+        VStack(spacing: 6) {
+            HStack {
+                Text(isProxy ? "认不出 App 的代理连接 · \(count) 个网站" : "经代理访问的网站 · \(count) 个")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Text("来自 Shadowrocket 日志，只有次数没有流量")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            // Its own columns: the table header pinned above belongs to the
+            // host rows and doesn't describe these.
+            HStack {
+                Text("网站").frame(maxWidth: .infinity, alignment: .leading)
+                Text("走向").frame(width: 52, alignment: .trailing)
+                Text("次数").frame(width: 60, alignment: .trailing)
+                Text("最后访问").frame(width: 72, alignment: .trailing)
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(Theme.textTertiary)
+        }
+        .padding(.horizontal, 10).padding(.top, 16).padding(.bottom, 6)
+        .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
+    }
+
     private func exportReport(_ app: AppUsage) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "\(app.name)-netpulse-report.csv"
         panel.allowedContentTypes = [.commaSeparatedText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         var csv = "host,kind,rate_down_kbps,total_down_kb,total_up_kb,connections\n"
-        for d in app.domains {
-            csv += "\(d.host),\(d.kind),\(d.rateDownKBps),\(d.totalDownKB),\(d.totalUpKB),\(d.connectionCount)\n"
+        for d in engine.sortedDomains(of: app) {
+            let fields = [d.host, d.kind,
+                          String(format: "%.2f", d.rateDownKBps),
+                          String(format: "%.2f", d.totalDownKB),
+                          String(format: "%.2f", d.totalUpKB),
+                          String(d.connectionCount)]
+            csv += fields.map(Self.csvField).joined(separator: ",") + "\n"
         }
-        try? csv.write(to: url, atomically: true, encoding: .utf8)
+        do {
+            try csv.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    /// RFC 4180 quoting: a kind like "本机 · Foo, Inc." used to split into
+    /// two columns.
+    private static func csvField(_ value: String) -> String {
+        guard value.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n" }) else { return value }
+        return "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\""
     }
 }
 
@@ -174,18 +239,24 @@ private struct DomainRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 1) {
+                // One line, elided in the middle: wrapped, "localhost:50316"
+                // read as "localhost:5031" over "6".
                 Text(domain.host).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(domain.host)
                 Text(domain.kind).font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text("↓ \(Format.rate(domain.rateDownKBps))")
-                .frame(width: 100, alignment: .trailing)
+                .frame(width: 84, alignment: .trailing)
                 .foregroundStyle(Color(hex: 0x4A4A4F))
             Text(Format.size(domain.totalDownKB))
-                .frame(width: 96, alignment: .trailing)
+                .frame(width: 80, alignment: .trailing)
                 .foregroundStyle(Theme.textPrimary)
             Text(Format.size(domain.totalUpKB))
-                .frame(width: 92, alignment: .trailing)
+                .frame(width: 80, alignment: .trailing)
                 .foregroundStyle(Theme.textSecondary)
             Text("\(domain.connectionCount)")
                 .frame(width: 52, alignment: .trailing)
@@ -202,5 +273,32 @@ private struct DomainRow: View {
             }
         )
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+private struct ProxyVisitRow: View {
+    let visit: ProxyVisit
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(visit.host).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(visit.host)
+                Text(visit.rule.isEmpty ? " " : "规则 \(visit.rule)").font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(visit.policy == "DIRECT" ? "直连" : visit.policy == "PROXY" ? "代理" : visit.policy)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(visit.policy == "DIRECT" ? Theme.textSecondary : Theme.accentBlue)
+                .frame(width: 52, alignment: .trailing)
+            Text("\(visit.count) 次").frame(width: 60, alignment: .trailing).foregroundStyle(Theme.textSecondary)
+            Text(visit.lastSeen).frame(width: 72, alignment: .trailing).foregroundStyle(Theme.textSecondary)
+        }
+        .font(.system(size: 11.5))
+        .monospacedDigit()
+        .padding(.horizontal, 10).padding(.vertical, 7)
     }
 }

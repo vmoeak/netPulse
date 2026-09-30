@@ -20,7 +20,17 @@ import Foundation
 /// no row of which was recognizable (in which case the message quotes the
 /// first line, so the real format can be read off the UI) — and a nettop
 /// that dies on startup reports its own stderr instead.
-final class NettopSampler {
+/// What the engine needs from a per-process byte counter source — the real
+/// `NettopSampler`, or canned samples in tests.
+protocol NettopSource: AnyObject {
+    var onStatusChange: ((MonitoringStatus) -> Void)? { get set }
+    func start()
+    func stop()
+    func snapshot() -> [Int32: NettopSampler.Sample]
+    func forget(pids: Set<Int32>)
+}
+
+final class NettopSampler: NettopSource {
     struct Sample {
         let pid: Int32
         let command: String
@@ -47,15 +57,43 @@ final class NettopSampler {
     private var firstLines: [String] = []
     private var stderrBuffer = Data()
     private var didReportHardFailure = false
+    private var parsedAnyRow = false
+
+    /// How many times in a row nettop has been relaunched without producing
+    /// a row in between. Reset once a run has parsed a row, so a nettop that dies
+    /// once after hours (sleep/wake does this) always comes back, while one
+    /// that can never run stops being retried.
+    private var restartAttempts = 0
+    private let maxRestartAttempts = 5
+    private var stopped = false
 
     func start() {
+        stopped = false
+        lock.lock()
+        buffer = Data()
+        latest = [:]
+        sawAnyOutput = false
+        firstLines = []
+        stderrBuffer = Data()
+        didReportHardFailure = false
+        parsedAnyRow = false
+        lock.unlock()
+
         let p = Process()
-        // Resolved via PATH rather than a hardcoded /usr/bin or /usr/sbin —
-        // both are plausible for nettop and this avoids guessing wrong.
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        // -P process mode, -x non-interactive log output (safe to pipe),
-        // -l 0 sample forever, -s 1 once per second, -J restrict columns.
-        p.arguments = ["nettop", "-P", "-x", "-l", "0", "-s", "1", "-J", "bytes_in,bytes_out"]
+        // nettop writes through stdio, which fully buffers into a pipe: on a
+        // quiet Mac a whole buffer takes tens of seconds to fill, so rows
+        // arrived in rare bursts and short-lived traffic (a 10 s download)
+        // was never seen at all — CI's smoke test caught this. Running it
+        // under `script` gives it a pseudo-terminal, where stdio flushes
+        // every line. `script` copies the terminal's output to our pipe
+        // unbuffered, and closing it hangs up nettop.
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+        // nettop is resolved via PATH rather than a hardcoded /usr/bin or
+        // /usr/sbin — both are plausible and this avoids guessing wrong.
+        // -P process mode, -x non-interactive log output, -l 0 sample
+        // forever, -s 1 once per second, -J restrict columns.
+        p.arguments = ["-q", "/dev/null",
+                       "/usr/bin/env", "nettop", "-P", "-x", "-l", "0", "-s", "1", "-J", "bytes_in,bytes_out"]
 
         let out = Pipe()
         let err = Pipe()
@@ -83,15 +121,34 @@ final class NettopSampler {
         p.terminationHandler = { [weak self] proc in
             guard let self else { return }
             self.lock.lock()
-            let stderrText = String(data: self.stderrBuffer, encoding: .utf8) ?? ""
+            // Under the pseudo-terminal nettop's own errors arrive on stdout,
+            // so its first lines stand in when `script` itself said nothing.
+            var stderrText = String(data: self.stderrBuffer, encoding: .utf8) ?? ""
+            if stderrText.isEmpty { stderrText = self.firstLines.joined(separator: " ⏎ ") }
             self.didReportHardFailure = true
+            let wasProducingRows = self.parsedAnyRow
             self.lock.unlock()
             self.watchdogWorkItem?.cancel()
             let detail = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
             let suffix = detail.isEmpty
                 ? "它可能需要更高权限，或此 Mac 上路径不同。"
                 : "nettop 输出：\(detail.suffix(400))"
-            self.onStatusChange?(.unavailable("nettop 已退出（code \(proc.terminationStatus)）。\(suffix)"))
+            let code = proc.terminationStatus
+            DispatchQueue.main.async {
+                guard !self.stopped else { return }
+                if wasProducingRows { self.restartAttempts = 0 }
+                if self.restartAttempts < self.maxRestartAttempts {
+                    self.restartAttempts += 1
+                    self.onStatusChange?(.degraded("nettop 已退出（code \(code)），正在重新启动…"))
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        guard !self.stopped else { return }
+                        self.teardown()
+                        self.start()
+                    }
+                } else {
+                    self.onStatusChange?(.unavailable("nettop 已退出（code \(code)）。\(suffix)"))
+                }
+            }
         }
 
         do {
@@ -106,6 +163,20 @@ final class NettopSampler {
     }
 
     func stop() {
+        stopped = true
+        teardown()
+    }
+
+    /// Drops dead pids so their last counters stop being reported forever —
+    /// and so a reused pid starts from its own counters, not the old ones.
+    func forget(pids: Set<Int32>) {
+        guard !pids.isEmpty else { return }
+        lock.lock()
+        for pid in pids { latest.removeValue(forKey: pid) }
+        lock.unlock()
+    }
+
+    private func teardown() {
         watchdogWorkItem?.cancel()
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         errorPipe?.fileHandleForReading.readabilityHandler = nil
@@ -155,7 +226,8 @@ final class NettopSampler {
     }
 
     private func parse(line: String) {
-        let raw = line.trimmingCharacters(in: .whitespaces)
+        // A terminal ends lines with \r\n.
+        let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return }
 
         lock.lock()
@@ -170,10 +242,11 @@ final class NettopSampler {
                                  command: row.command,
                                  bytesInCumKB: row.bytesIn / 1024,
                                  bytesOutCumKB: row.bytesOut / 1024)
+        parsedAnyRow = true
         lock.unlock()
     }
 
-    private struct Row {
+    struct Row {
         let command: String
         let pid: Int32
         let bytesIn: Double
@@ -183,7 +256,7 @@ final class NettopSampler {
     /// Whitespace is the real separator; the comma path is kept because
     /// nettop's logging mode does emit CSV in some invocations, and splitting
     /// on the wrong one silently yields a single unparsable cell.
-    private static func parseRow(_ raw: String) -> Row? {
+    static func parseRow(_ raw: String) -> Row? {
         if raw.contains(",") {
             let fields = raw.components(separatedBy: ",")
             guard let (command, pid) = processCell(in: fields) else { return nil }
