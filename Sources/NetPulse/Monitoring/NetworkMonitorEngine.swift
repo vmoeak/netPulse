@@ -734,8 +734,9 @@ final class NetworkMonitorEngine: ObservableObject {
     private func loopbackPeerLabel(port: Int) -> String {
         guard let listener = latestListeners[port] else { return "本机进程" }
         let peer = identify(pid: listener.pid, command: listener.command)
-        // Through a proxy only the proxy knows the real site.
-        if proxyAppIDs.contains(peer.id) { return "经本机代理 \(peer.name)，真实网站只有代理知道" }
+        // The sites behind it, when its log is readable, are listed under
+        // 经代理访问的网站.
+        if proxyAppIDs.contains(peer.id) { return "经本机代理 · \(peer.name)" }
         return "本机 · \(peer.name)"
     }
 

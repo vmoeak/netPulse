@@ -233,6 +233,7 @@ private struct DomainRow: View {
                     .truncationMode(.middle)
                     .help(domain.host)
                 Text(domain.kind).font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text("↓ \(Format.rate(domain.rateDownKBps))")
