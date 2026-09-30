@@ -65,14 +65,14 @@ final class EngineTests: XCTestCase {
                                                    bytesInCumKB: downKB, bytesOutCumKB: upKB)
     }
 
-    private func feed(_ pid: Int32, _ command: String, downKB: Double,
-                      connections: [String: (host: String, downKB: Double)]) {
+    private func flows(_ pid: Int32, _ command: String, downKB: Double,
+                       connections: [String: (host: String, downKB: Double)]) -> [Int32: NettopSampler.Sample] {
         var sample = NettopSampler.Sample(pid: pid, command: command, bytesInCumKB: downKB, bytesOutCumKB: 0)
         for (key, conn) in connections {
             sample.connections[key] = NettopSampler.Connection(remoteHost: conn.host, remotePort: 443,
                                                                bytesIn: conn.downKB * 1024, bytesOut: 0)
         }
-        nettop.samples[pid] = sample
+        return [pid: sample]
     }
 
     private func app(_ id: String) -> AppUsage? {
@@ -81,17 +81,22 @@ final class EngineTests: XCTestCase {
 
     func testConnectionCountersSplitBytesExactlyByHost() throws {
         let pid = try livePID()
-        feed(pid, "alpha", downKB: 100, connections: ["a": ("192.0.2.10", 60), "b": ("198.18.0.23", 40)])
-        engine.tick()
-        // a grows by 30, b by 50, c is new with 15, and 5 went through one
-        // that closed in between.
-        feed(pid, "alpha", downKB: 200, connections: ["a": ("192.0.2.10", 90), "b": ("198.18.0.23", 90),
-                                                      "c": ("192.0.2.10", 15)])
+        let start = Date()
+        engine.ingestFlows(flows(pid, "alpha", downKB: 100,
+                                 connections: ["a": ("192.0.2.10", 60), "b": ("198.18.0.23", 40)]), at: start)
+        // Two seconds later a has grown by 30, b by 50, c is new with 15,
+        // and 5 went through one that closed in between.
+        engine.ingestFlows(flows(pid, "alpha", downKB: 200,
+                                 connections: ["a": ("192.0.2.10", 90), "b": ("198.18.0.23", 90),
+                                               "c": ("192.0.2.10", 15)]),
+                           at: start.addingTimeInterval(2))
+        feed(pid, "alpha", downKB: 0)
         engine.tick()
         let domains = Dictionary(uniqueKeysWithValues: (app("proc.alpha")?.domains ?? []).map { ($0.host, $0) })
-        XCTAssertEqual(domains["192.0.2.10"]?.rateDownKBps ?? 0, 45, accuracy: 0.001)
+        XCTAssertEqual(domains["192.0.2.10"]?.rateDownKBps ?? 0, 22.5, accuracy: 0.001)
+        XCTAssertEqual(domains["192.0.2.10"]?.totalDownKB ?? 0, 45, accuracy: 0.001)
         XCTAssertEqual(domains["192.0.2.10"]?.connectionCount, 2)
-        XCTAssertEqual(domains["198.18.0.23"]?.rateDownKBps ?? 0, 50, accuracy: 0.001)
+        XCTAssertEqual(domains["198.18.0.23"]?.totalDownKB ?? 0, 50, accuracy: 0.001)
         XCTAssertEqual(domains["198.18.0.23"]?.kind, "经 TUN 代理")
         XCTAssertEqual(domains["已关闭的连接"]?.totalDownKB ?? 0, 5, accuracy: 0.001)
         XCTAssertFalse(engine.domainRollups.contains { $0.host == "已关闭的连接" })

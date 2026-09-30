@@ -21,8 +21,9 @@ import Foundation
 /// first line, so the real format can be read off the UI) — and a nettop
 /// that dies on startup reports its own stderr instead.
 ///
-/// Each process row is followed by its connections (see `parseLine`), whose
-/// counters are what split an app's bytes exactly by remote host.
+/// `readConnections()` is the per-connection counterpart: one sample in
+/// which each process row is followed by its connections (see `parseLine`),
+/// whose counters split an app's bytes exactly by remote host.
 /// What the engine needs from a per-process byte counter source — the real
 /// `NettopSampler`, or canned samples in tests.
 protocol NettopSource: AnyObject {
@@ -70,11 +71,6 @@ final class NettopSampler: NettopSource {
     private let newline = Data([0x0A])
     private let lock = NSLock()
     private var latest: [Int32: Sample] = [:]
-    /// The process block being read: nettop prints a process row, then its
-    /// connections. It is published only once the block ends, so a snapshot
-    /// never sees a process with half its connections — a connection missing
-    /// from one snapshot would be counted again in full on the next.
-    private var pending: Sample?
     private var watchdogWorkItem: DispatchWorkItem?
     /// Diagnostics for the watchdog, all guarded by `lock`: whether nettop
     /// wrote anything at all, the first few lines verbatim (so an unexpected
@@ -99,7 +95,6 @@ final class NettopSampler: NettopSource {
         lock.lock()
         buffer = Data()
         latest = [:]
-        pending = nil
         sawAnyOutput = false
         firstLines = []
         stderrBuffer = Data()
@@ -118,14 +113,12 @@ final class NettopSampler: NettopSource {
         p.executableURL = URL(fileURLWithPath: "/usr/bin/script")
         // nettop is resolved via PATH rather than a hardcoded /usr/bin or
         // /usr/sbin — both are plausible and this avoids guessing wrong.
-        // No -P: every process row is followed by its connections, which is
-        // what gives exact bytes per remote host. -n keeps remotes as
-        // addresses (nettop's own lookups swapped a connection's IP for a
-        // name between samples, which would read as a new connection); they
-        // are resolved separately. -x non-interactive log output, -l 0
-        // sample forever, -s 1 once per second, -J restrict columns.
+        // -P process mode, -x non-interactive log output, -l 0 sample
+        // forever, -s 1 once per second, -J restrict columns. Connections
+        // are read separately and less often (`readConnections()`): streamed
+        // every second they kept nettop at over 100% CPU.
         p.arguments = ["-q", "/dev/null",
-                       "/usr/bin/env", "nettop", "-n", "-x", "-l", "0", "-s", "1", "-J", "bytes_in,bytes_out"]
+                       "/usr/bin/env", "nettop", "-P", "-x", "-l", "0", "-s", "1", "-J", "bytes_in,bytes_out"]
 
         let out = Pipe()
         let err = Pipe()
@@ -265,27 +258,52 @@ final class NettopSampler: NettopSource {
         lock.lock(); defer { lock.unlock() }
         sawAnyOutput = true
         if firstLines.count < 3 { firstLines.append(String(raw.prefix(120))) }
-        switch Self.parseLine(line) {
-        case .connection(let key, let connection):
-            pending?.connections[key] = connection
-        case .process(let row):
-            commitPending()
-            pending = Sample(pid: row.pid,
-                             command: row.command,
-                             bytesInCumKB: row.bytesIn / 1024,
-                             bytesOutCumKB: row.bytesOut / 1024)
-            parsedAnyRow = true
-        case .other:
-            // The header nettop reprints before every sample.
-            commitPending()
-        }
+        guard let row = Self.parseRow(raw) else { return }
+        latest[row.pid] = Sample(pid: row.pid,
+                                 command: row.command,
+                                 bytesInCumKB: row.bytesIn / 1024,
+                                 bytesOutCumKB: row.bytesOut / 1024)
+        parsedAnyRow = true
     }
 
-    /// Caller holds `lock`.
-    private func commitPending() {
-        guard let sample = pending else { return }
-        latest[sample.pid] = sample
-        pending = nil
+    /// One sample of every process's connections, from a nettop that exits
+    /// right after (so no pseudo-terminal is needed to flush it). -n keeps
+    /// remotes as addresses: nettop's own lookups swap a connection's IP for
+    /// a name between samples, which would read as a new connection.
+    static func readConnections(timeout: TimeInterval = 5) -> [Int32: Sample]? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = ["nettop", "-n", "-x", "-l", "1", "-J", "bytes_in,bytes_out"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        let watchdog = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        watchdog.cancel()
+        guard p.terminationStatus == 0, let text = String(data: data, encoding: .utf8) else { return nil }
+        return parseConnectionSample(text)
+    }
+
+    static func parseConnectionSample(_ text: String) -> [Int32: Sample] {
+        var result: [Int32: Sample] = [:]
+        var current: Sample?
+        for line in text.split(whereSeparator: \.isNewline) {
+            switch parseLine(String(line)) {
+            case .process(let row):
+                if let current { result[current.pid] = current }
+                current = Sample(pid: row.pid, command: row.command,
+                                 bytesInCumKB: row.bytesIn / 1024, bytesOutCumKB: row.bytesOut / 1024)
+            case .connection(let key, let connection):
+                current?.connections[key] = connection
+            case .other:
+                break
+            }
+        }
+        if let current { result[current.pid] = current }
+        return result
     }
 
     enum Line: Equatable {

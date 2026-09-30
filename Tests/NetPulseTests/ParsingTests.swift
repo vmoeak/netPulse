@@ -44,6 +44,21 @@ final class ParsingTests: XCTestCase {
         XCTAssertEqual(NettopSampler.parseLine("                     bytes_in   bytes_out"), .other)
     }
 
+    func testNettopConnectionSampleGroupsConnectionsUnderTheirProcess() {
+        let text = """
+                              bytes_in   bytes_out
+        Lark Helper.1060        300   40
+           tcp4 192.168.1.5:49753<->203.0.113.7:443   200   30
+           tcp4 127.0.0.1:56826<->127.0.0.1:1082   100   10
+        curl.77       5   5
+           udp4 *:5353<->*:*
+        """
+        let samples = NettopSampler.parseConnectionSample(text)
+        XCTAssertEqual(samples[1060]?.connections.count, 2)
+        XCTAssertEqual(samples[1060]?.bytesInCumKB ?? 0, 300.0 / 1024, accuracy: 0.0001)
+        XCTAssertEqual(samples[77]?.connections.values.first?.remoteHost, "*")
+    }
+
     func testLsofFieldOutput() throws {
         let text = """
         p123

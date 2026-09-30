@@ -69,6 +69,15 @@ final class NetworkMonitorEngine: ObservableObject {
     /// `localhost:<port>` — so a later reverse-DNS answer relabels the row
     /// instead of starting a second one under the new name.
     private var hostTotals: [String: [String: HostTotals]] = [:]
+    /// The last per-connection sample, and what it measured per app and
+    /// endpoint since the one before (see `ingestFlows`).
+    private var previousFlows: [Int32: NettopSampler.Sample] = [:]
+    private var previousFlowsAt: Date?
+    private var flowRates: [String: [String: HostTotals]] = [:]
+    private var flowConns: [String: [String: Int]] = [:]
+    /// Set once nettop has reported connections; from then on hosts are
+    /// measured rather than estimated.
+    private var hasFlowData = false
     /// Apps the user excluded from counting. Persisted, so a pause outlives
     /// the app relaunching (or NetPulse restarting).
     private var pausedIDs: Set<String>
@@ -436,6 +445,7 @@ final class NetworkMonitorEngine: ObservableObject {
         latestConnections = Dictionary(infos.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         latestListeners = snapshot.listeners
         latestLoopbackClients = snapshot.loopbackClients
+        if let flows = snapshot.flows { ingestFlows(flows, at: snapshot.takenAt) }
         // Loopback peers are deliberately not resolved: reverse DNS answers
         // "localhost" for all of them, which is exactly the useless label the
         // listener lookup exists to replace.
@@ -470,11 +480,6 @@ final class NetworkMonitorEngine: ObservableObject {
 
         var aggregates: [String: Aggregate] = [:]
         var pausedRunning: [String: ProcessDirectory.Identity] = [:]
-        // nettop's per-connection counters, when it gives them, split each
-        // app's bytes by host exactly; otherwise lsof's connection counts
-        // are all there is to go on.
-        let exact = samples.values.contains { !$0.connections.isEmpty }
-        var remoteIPs: Set<String> = []
 
         for (pid, sample) in samples {
             let identity = identify(pid: pid, command: sample.command)
@@ -492,14 +497,6 @@ final class NetworkMonitorEngine: ObservableObject {
             agg.downKBps += downDeltaKB
             agg.upKBps += upDeltaKB
             agg.pids.append(pid)
-            if exact {
-                agg.exact = true
-                splitByConnection(sample, previous: prev, appID: identity.id,
-                                  downKB: downDeltaKB, upKB: upDeltaKB, into: &agg)
-                for conn in sample.connections.values where conn.remoteHost != "*" && !conn.isLoopback {
-                    remoteIPs.insert(conn.remoteHost)
-                }
-            }
             aggregates[identity.id] = agg
 
             history.addDelta(appID: identity.id, downKB: downDeltaKB, upKB: upDeltaKB)
@@ -508,7 +505,6 @@ final class NetworkMonitorEngine: ObservableObject {
             }
         }
         previousSamples = samples
-        if !remoteIPs.isEmpty { resolveHosts(remoteIPs) }
 
         proxyAppIDs = findProxyApps()
         var next: [String: AppUsage] = [:]
@@ -695,11 +691,52 @@ final class NetworkMonitorEngine: ObservableObject {
         var downKBps: Double = 0
         var upKBps: Double = 0
         var pids: [Int32] = []
-        /// Filled from nettop's connection rows: this tick's KB per endpoint
-        /// and the connections open to each.
-        var exact = false
-        var endpointKB: [String: HostTotals] = [:]
-        var endpointConns: [String: Int] = [:]
+    }
+
+    private struct AppFlows {
+        var kb: [String: HostTotals] = [:]
+        var conns: [String: Int] = [:]
+    }
+
+    /// Takes one sample of nettop's per-connection counters: each app's
+    /// bytes since the previous sample go into its hosts' totals, and the
+    /// rate and open connections per host are kept for the rows until the
+    /// next sample.
+    func ingestFlows(_ flows: [Int32: NettopSampler.Sample], at date: Date) {
+        let elapsed = previousFlowsAt.map { max(0.5, date.timeIntervalSince($0)) }
+        var byApp: [String: AppFlows] = [:]
+        var remoteIPs: Set<String> = []
+        for (pid, sample) in flows {
+            let identity = identify(pid: pid, command: sample.command)
+            guard !pausedIDs.contains(identity.id) else { continue }
+            var flow = byApp[identity.id] ?? AppFlows()
+            splitByConnection(sample, previous: elapsed == nil ? nil : previousFlows[pid],
+                              appID: identity.id, into: &flow)
+            byApp[identity.id] = flow
+            for conn in sample.connections.values where conn.remoteHost != "*" && !conn.isLoopback {
+                remoteIPs.insert(conn.remoteHost)
+            }
+        }
+        var rates: [String: [String: HostTotals]] = [:]
+        for (appID, flow) in byApp {
+            var totals = hostTotals[appID] ?? [:]
+            var appRates: [String: HostTotals] = [:]
+            for (endpoint, kb) in flow.kb {
+                totals[endpoint, default: HostTotals()].downKB += kb.downKB
+                totals[endpoint, default: HostTotals()].upKB += kb.upKB
+                if let elapsed {
+                    appRates[endpoint] = HostTotals(downKB: kb.downKB / elapsed, upKB: kb.upKB / elapsed)
+                }
+            }
+            hostTotals[appID] = totals
+            rates[appID] = appRates
+        }
+        flowRates = rates
+        flowConns = byApp.mapValues(\.conns)
+        previousFlows = flows
+        previousFlowsAt = date
+        if flows.values.contains(where: { !$0.connections.isEmpty }) { hasFlowData = true }
+        if !remoteIPs.isEmpty { resolveHosts(remoteIPs) }
     }
 
     /// Endpoint for bytes whose connection closed between two samples: the
@@ -709,14 +746,16 @@ final class NetworkMonitorEngine: ObservableObject {
     /// Sockets with no fixed peer (mDNS, some UDP senders).
     private static let unconnectedEndpoint = "unconnected:"
 
-    /// Adds one process's traffic this tick to `agg`, per remote endpoint,
+    /// Adds one process's traffic since the previous sample to `flow`, per
+    /// remote endpoint,
     /// from the growth of each connection's own counters. A connection that
     /// wasn't there last sample opened since, so all of its bytes are new;
     /// whatever the process moved beyond its open connections went through
     /// ones that have already closed.
     private func splitByConnection(_ sample: NettopSampler.Sample, previous: NettopSampler.Sample?,
-                                   appID: String, downKB: Double, upKB: Double,
-                                   into agg: inout Aggregate) {
+                                   appID: String, into flow: inout AppFlows) {
+        let downKB = max(0, sample.bytesInCumKB - (previous?.bytesInCumKB ?? sample.bytesInCumKB))
+        let upKB = max(0, sample.bytesOutCumKB - (previous?.bytesOutCumKB ?? sample.bytesOutCumKB))
         var seenDown = 0.0
         var seenUp = 0.0
         for (key, conn) in sample.connections {
@@ -728,15 +767,15 @@ final class NetworkMonitorEngine: ObservableObject {
             } else {
                 endpoint = conn.remoteHost
             }
-            if conn.remoteHost != "*" { agg.endpointConns[endpoint, default: 0] += 1 }
+            if conn.remoteHost != "*" { flow.conns[endpoint, default: 0] += 1 }
             // A process's first sample is only the baseline, as for its totals.
             guard let previous else { continue }
             let old = previous.connections[key]
             let down = max(0, conn.bytesIn - (old?.bytesIn ?? 0)) / 1024
             let up = max(0, conn.bytesOut - (old?.bytesOut ?? 0)) / 1024
             guard down > 0 || up > 0 else { continue }
-            agg.endpointKB[endpoint, default: HostTotals()].downKB += down
-            agg.endpointKB[endpoint, default: HostTotals()].upKB += up
+            flow.kb[endpoint, default: HostTotals()].downKB += down
+            flow.kb[endpoint, default: HostTotals()].upKB += up
             seenDown += down
             seenUp += up
         }
@@ -744,8 +783,8 @@ final class NetworkMonitorEngine: ObservableObject {
         let restDown = max(0, downKB - seenDown)
         let restUp = max(0, upKB - seenUp)
         guard restDown > 0 || restUp > 0 else { return }
-        agg.endpointKB[Self.closedEndpoint, default: HostTotals()].downKB += restDown
-        agg.endpointKB[Self.closedEndpoint, default: HostTotals()].upKB += restUp
+        flow.kb[Self.closedEndpoint, default: HostTotals()].downKB += restDown
+        flow.kb[Self.closedEndpoint, default: HostTotals()].upKB += restUp
     }
 
     private func buildUsage(id: String, agg: Aggregate) -> AppUsage {
@@ -759,14 +798,16 @@ final class NetworkMonitorEngine: ObservableObject {
         usage.downHistory = Array((usage.downHistory + [agg.downKBps]).suffix(Self.historyLength))
         usage.upHistory = Array((usage.upHistory + [agg.upKBps]).suffix(Self.historyLength))
 
-        // This tick's KB and open connections per endpoint: measured when
-        // nettop reports connections, otherwise the app's rate split by how
-        // many of its lsof connections go to each endpoint.
+        // KB per second and open connections per endpoint: measured over the
+        // last two connection samples when nettop gives them, otherwise the
+        // app's rate split by how many of its lsof connections go to each
+        // endpoint.
         var tickKB: [String: HostTotals] = [:]
         var connCounts: [String: Int] = [:]
-        if agg.exact {
-            tickKB = agg.endpointKB
-            connCounts = agg.endpointConns
+        var appHostTotals = hostTotals[id] ?? [:]
+        if hasFlowData {
+            tickKB = flowRates[id] ?? [:]
+            connCounts = flowConns[id] ?? [:]
         } else {
             for pid in agg.pids {
                 guard let info = latestConnections[pid] else { continue }
@@ -782,15 +823,14 @@ final class NetworkMonitorEngine: ObservableObject {
                 let share = Double(count) / totalConns
                 tickKB[endpoint] = HostTotals(downKB: agg.downKBps * share, upKB: agg.upKBps * share)
             }
+            // One-second tick, so the rate is also this tick's KB.
+            for (endpoint, kb) in tickKB {
+                appHostTotals[endpoint, default: HostTotals()].downKB += kb.downKB
+                appHostTotals[endpoint, default: HostTotals()].upKB += kb.upKB
+            }
+            hostTotals[id] = appHostTotals
         }
         usage.connectionCount = connCounts.values.reduce(0, +)
-
-        var appHostTotals = hostTotals[id] ?? [:]
-        for (endpoint, kb) in tickKB {
-            appHostTotals[endpoint, default: HostTotals()].downKB += kb.downKB
-            appHostTotals[endpoint, default: HostTotals()].upKB += kb.upKB
-        }
-        hostTotals[id] = appHostTotals
 
         // Rows are the endpoints open or moving now. Several IPs of one
         // service often reverse-resolve to the same name; they are one row,
