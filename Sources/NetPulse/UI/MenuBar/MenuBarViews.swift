@@ -11,38 +11,65 @@ import AppKit
 struct MenuBarExtraLabel: View {
     @ObservedObject var engine: NetworkMonitorEngine
 
+    // MenuBarExtra's label keeps only its first Text or Image and drops the
+    // rest of any stack, so on a real Mac the chip showed the ▲ line alone —
+    // no ▼ line, no bars — however the stack was sized. Rendering the whole
+    // chip into one image is the one layout the menu bar keeps intact.
+    // It is a template image, so macOS tints it for light and dark menu
+    // bars the way it does its own status items.
     var body: some View {
-        HStack(spacing: 8) {
-            // The menu bar gives about 22pt of height. Two 9.5pt lines plus
-            // spacing overflow it and the second one is silently clipped,
-            // which is why only the ▲ row used to show — 8.5pt with no
-            // spacing is what actually fits two lines, and is the size other
-            // network meters use up here.
-            VStack(alignment: .trailing, spacing: 0) {
-                Text("▲ \(Format.rate(engine.totalUpKBps))")
-                    .foregroundStyle(Color(hex: 0xFFD479))
-                Text("▼ \(Format.rate(engine.totalDownKBps))")
-                    .foregroundStyle(Color(hex: 0x7EC8FF))
-            }
-            .font(.system(size: 8.5))
-            .monospacedDigit()
-            .frame(height: 20)
+        Image(nsImage: chipImage)
+    }
 
-            MiniBars(values: Array(engine.totalDownHistory.suffix(9)))
+    @MainActor private var chipImage: NSImage {
+        let renderer = ImageRenderer(content: MenuBarChip(
+            upKBps: engine.totalUpKBps,
+            downKBps: engine.totalDownKBps,
+            history: Array(engine.totalDownHistory.suffix(9))))
+        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
+        let image = renderer.nsImage ?? NSImage(size: NSSize(width: 1, height: 1))
+        image.isTemplate = true
+        return image
+    }
+}
+
+/// What the chip image is drawn from. Solid black only: as a template
+/// image, its alpha is all macOS uses.
+private struct MenuBarChip: View {
+    let upKBps: Double
+    let downKBps: Double
+    let history: [Double]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            // Two 8.5pt lines with no spacing are what fit the menu bar's
+            // ~22pt height.
+            VStack(alignment: .trailing, spacing: 0) {
+                Text("▲ \(Format.rate(upKBps))")
+                Text("▼ \(Format.rate(downKBps))")
+            }
+            .font(.system(size: 8.5, weight: .medium))
+            .monospacedDigit()
+            .fixedSize()
+            MiniBars(values: history, color: .black)
         }
+        .foregroundStyle(.black)
+        .frame(height: 20)
+        .padding(.horizontal, 1)
     }
 }
 
 /// The 9-bar mini history strip in the menu bar chip and its popover.
 struct MiniBars: View {
     let values: [Double]
+    var color: Color = Color(hex: 0x8FD0FF)
 
     var body: some View {
         let maxV = max(values.max() ?? 1, 1)
         HStack(alignment: .bottom, spacing: 1.5) {
             ForEach(Array(values.enumerated()), id: \.offset) { _, v in
                 RoundedRectangle(cornerRadius: 1)
-                    .fill(Color(hex: 0x8FD0FF))
+                    .fill(color)
                     .frame(width: 2, height: max(2, CGFloat(v / maxV) * 14))
             }
         }
