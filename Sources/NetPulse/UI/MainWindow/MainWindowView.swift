@@ -21,6 +21,7 @@ enum PaneWidth {
 /// whole width to the right of the sidebar.
 struct MainWindowView: View {
     @ObservedObject var engine: NetworkMonitorEngine
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         HStack(spacing: 0) {
@@ -38,6 +39,11 @@ struct MainWindowView: View {
         .frame(idealWidth: 1280, idealHeight: 820)
         .background(WindowFloor(size: NSSize(width: PaneWidth.windowMin,
                                              height: PaneWidth.windowMinHeight)))
+        // Hands the UI self-test the same open-window path the popover's
+        // button uses, since the popover itself may never be built.
+        .onAppear {
+            engine.openMainWindowAction = { [openWindow] in MainWindowOpener.open(using: openWindow) }
+        }
     }
 }
 

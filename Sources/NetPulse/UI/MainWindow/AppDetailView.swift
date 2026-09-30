@@ -118,7 +118,7 @@ struct AppDetailView: View {
 
     private func domainSection(_ app: AppUsage) -> some View {
         let maxTotalDown = app.domains.map(\.totalDownKB).max() ?? 1
-        let domains = sortedDomains(app)
+        let domains = engine.sortedDomains(of: app)
         return VStack(spacing: 0) {
             HStack {
                 Text("域名明细 · \(app.domains.count) 个主机")
@@ -160,24 +160,13 @@ struct AppDetailView: View {
         .padding(.horizontal, 22)
     }
 
-    /// Follows the list's 实时速率 / 累计流量 toggle, which the section
-    /// header already claimed it did.
-    private func sortedDomains(_ app: AppUsage) -> [DomainUsage] {
-        switch engine.sortMode {
-        case .rate:
-            return app.domains.sorted { ($0.rateDownKBps, $0.connectionCount) > ($1.rateDownKBps, $1.connectionCount) }
-        case .total:
-            return app.domains.sorted { ($0.totalDownKB, $0.totalUpKB) > ($1.totalDownKB, $1.totalUpKB) }
-        }
-    }
-
     private func exportReport(_ app: AppUsage) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "\(app.name)-netpulse-report.csv"
         panel.allowedContentTypes = [.commaSeparatedText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         var csv = "host,kind,rate_down_kbps,total_down_kb,total_up_kb,connections\n"
-        for d in sortedDomains(app) {
+        for d in engine.sortedDomains(of: app) {
             let fields = [d.host, d.kind,
                           String(format: "%.2f", d.rateDownKBps),
                           String(format: "%.2f", d.totalDownKB),

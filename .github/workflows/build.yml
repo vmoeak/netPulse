@@ -36,7 +36,8 @@ jobs:
       # `timeout`), so an app that never reports fails instead of hanging.
       - name: Smoke test the app
         run: |
-          NETPULSE_SELFTEST_SECONDS=30 perl -e 'alarm 90; exec @ARGV' \
+          NETPULSE_SELFTEST_SECONDS=30 NETPULSE_SELFTEST_SNAPSHOTS="$PWD/selftest-snapshots" \
+            perl -e 'alarm 90; exec @ARGV' \
             dist/NetPulse.app/Contents/MacOS/NetPulse > selftest.json &
           APP=$!
           # The same nettop invocation the app uses, logged raw, so a failed
@@ -51,6 +52,14 @@ jobs:
             echo "--- nettop rows for curl ---"; grep -i curl nettop.log | head -n 40
             exit 1
           fi
+
+      - name: Upload UI self-test snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-snapshots
+          path: selftest-snapshots
+          if-no-files-found: warn
 
       # upload-artifact rewrites every file to 644/755 and would take
       # dist/NetPulse.app's *contents* as the archive root, so a downloaded

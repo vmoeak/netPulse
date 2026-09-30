@@ -58,6 +58,9 @@ final class NetworkMonitorEngine: ObservableObject {
 
     private var tickTimer: Timer?
     private var hasStarted = false
+    /// Set by the main window once it appears; the UI self-test opens the
+    /// main window through it exactly as the popover button does.
+    var openMainWindowAction: (@MainActor () -> Void)?
     private let identifyProcess: (Int32, String) -> ProcessDirectory.Identity
 
     /// Parameters exist for tests, which drive `tick()` and
@@ -113,9 +116,16 @@ final class NetworkMonitorEngine: ObservableObject {
     private func scheduleSelfTestIfRequested() {
         guard let raw = ProcessInfo.processInfo.environment["NETPULSE_SELFTEST_SECONDS"],
               let seconds = Double(raw), seconds > 0 else { return }
+        let snapshotDir = ProcessInfo.processInfo.environment["NETPULSE_SELFTEST_SNAPSHOTS"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            FileHandle.standardOutput.write(self.selfTestReport())
+            var ui: [String: Any]?
+            if let snapshotDir {
+                ui = await UISelfTest.run(engine: self, seconds: seconds, outputDir: snapshotDir)
+            } else {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            }
+            FileHandle.standardOutput.write(self.selfTestReport(ui: ui))
             FileHandle.standardOutput.write(Data("\n".utf8))
             self.stop()
             exit(0)
@@ -123,7 +133,7 @@ final class NetworkMonitorEngine: ObservableObject {
     }
 
     /// What the engine is showing right now, as JSON.
-    func selfTestReport() -> Data {
+    func selfTestReport(ui: [String: Any]? = nil) -> Data {
         let statusText: String
         switch status {
         case .starting: statusText = "starting"
@@ -144,7 +154,7 @@ final class NetworkMonitorEngine: ObservableObject {
                 "hosts": app.domains.map(\.host),
             ]
         }
-        let report: [String: Any] = [
+        var report: [String: Any] = [
             "status": statusText,
             "totalDownKBps": totalDownKBps,
             "totalUpKBps": totalUpKBps,
@@ -152,6 +162,7 @@ final class NetworkMonitorEngine: ObservableObject {
             "domainRollups": domainRollups.map(\.host),
             "archivedApps": archivedApps.map(\.id),
         ]
+        if let ui { report["ui"] = ui }
         return (try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])) ?? Data()
     }
 
@@ -194,6 +205,17 @@ final class NetworkMonitorEngine: ObservableObject {
     var filteredApps: [AppUsage] {
         guard !searchText.isEmpty else { return listedApps }
         return listedApps.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    /// The detail pane's host order: it follows the list's 实时速率 /
+    /// 累计流量 toggle, which the section header already claimed it did.
+    func sortedDomains(of app: AppUsage) -> [DomainUsage] {
+        switch sortMode {
+        case .rate:
+            return app.domains.sorted { ($0.rateDownKBps, $0.connectionCount) > ($1.rateDownKBps, $1.connectionCount) }
+        case .total:
+            return app.domains.sorted { ($0.totalDownKB, $0.totalUpKB) > ($1.totalDownKB, $1.totalUpKB) }
+        }
     }
 
     var selectedApp: AppUsage? {

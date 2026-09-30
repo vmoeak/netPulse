@@ -21,7 +21,9 @@ struct MenuBarExtraLabel: View {
         Image(nsImage: chipImage)
     }
 
-    @MainActor private var chipImage: NSImage {
+    @MainActor private var chipImage: NSImage { Self.chipImage(for: engine) }
+
+    @MainActor static func chipImage(for engine: NetworkMonitorEngine) -> NSImage {
         let renderer = ImageRenderer(content: MenuBarChip(
             upKBps: engine.totalUpKBps,
             downKBps: engine.totalDownKBps,
@@ -174,23 +176,7 @@ struct MenuBarPopoverView: View {
         HStack {
             Text("全部合计 ▼ \(Format.rate(engine.totalDownKBps))  ▲ \(Format.rate(engine.totalUpKBps))")
             Spacer()
-            Button("打开主窗口") {
-                NSApp.activate(ignoringOtherApps: true)
-                // openWindow on a WindowGroup always adds a window, so each
-                // click used to stack another copy. Bring back the existing
-                // one (SwiftUI names them "main-AppWindow-N") when there is.
-                // A closed window can linger in NSApp.windows without its
-                // content, so only a shown or minimized one is reused.
-                if let existing = NSApp.windows.first(where: {
-                    $0.identifier?.rawValue.hasPrefix("main") == true
-                        && ($0.isVisible || $0.isMiniaturized)
-                }) {
-                    if existing.isMiniaturized { existing.deminiaturize(nil) }
-                    existing.makeKeyAndOrderFront(nil)
-                } else {
-                    openWindow(id: "main")
-                }
-            }
+            Button("打开主窗口") { MainWindowOpener.open(using: openWindow) }
             .buttonStyle(.plain)
         }
         .font(.system(size: 11.5))
