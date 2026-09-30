@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// Persists per-day cumulative KB per app to a JSON file under Application
 /// Support, so 本周/本月/全部 rollups survive relaunches. Today's bucket is
@@ -22,6 +22,7 @@ final class HistoryStore {
     }()
     private var dirty = false
     private var saveTimer: Timer?
+    private var terminationObserver: NSObjectProtocol?
 
     init() {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -31,6 +32,14 @@ final class HistoryStore {
         fileURL = dir.appendingPathComponent("history.json")
         load()
         saveTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            self?.saveIfDirty()
+        }
+        // Nothing else saves on quit, so up to 15 seconds of traffic went
+        // missing from the totals every time the app was closed. Posted on
+        // the main thread, where every other access to `days` happens.
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
             self?.saveIfDirty()
         }
     }

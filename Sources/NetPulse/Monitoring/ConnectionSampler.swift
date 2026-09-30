@@ -45,6 +45,9 @@ final class ConnectionSampler {
 
     private let interval: TimeInterval
     private var timer: Timer?
+    /// Main-thread only. A slow lsof (hundreds of sockets, a busy Mac) can
+    /// outlast the interval; without this the passes pile up behind it.
+    private var pollInFlight = false
 
     init(interval: TimeInterval = 3) {
         self.interval = interval
@@ -63,13 +66,17 @@ final class ConnectionSampler {
     }
 
     private func poll() {
+        guard !pollInFlight else { return }
+        pollInFlight = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
-            switch Self.runLsof() {
-            case .success(let snapshot):
-                DispatchQueue.main.async { self.onSample?(snapshot) }
-            case .failure(let error):
-                DispatchQueue.main.async { self.onStatusChange?(.degraded(error.message)) }
+            let result = Self.runLsof()
+            DispatchQueue.main.async {
+                self.pollInFlight = false
+                switch result {
+                case .success(let snapshot): self.onSample?(snapshot)
+                case .failure(let error): self.onStatusChange?(.degraded(error.message))
+                }
             }
         }
     }
@@ -92,7 +99,10 @@ final class ConnectionSampler {
         p.arguments = ["lsof", "-i", "-n", "-P", "+c", "0", "-F", "pcfnP"]
         let out = Pipe()
         p.standardOutput = out
-        p.standardError = Pipe()
+        // Discarded rather than piped: nothing reads stderr, and an unread
+        // pipe that fills up (lsof warns per inaccessible file) blocks lsof
+        // before it ever closes stdout.
+        p.standardError = FileHandle.nullDevice
         do {
             try p.run()
         } catch {

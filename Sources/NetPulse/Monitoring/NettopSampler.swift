@@ -47,8 +47,28 @@ final class NettopSampler {
     private var firstLines: [String] = []
     private var stderrBuffer = Data()
     private var didReportHardFailure = false
+    private var parsedAnyRow = false
+
+    /// How many times in a row nettop has been relaunched without producing
+    /// a row in between. Reset once a run has parsed a row, so a nettop that dies
+    /// once after hours (sleep/wake does this) always comes back, while one
+    /// that can never run stops being retried.
+    private var restartAttempts = 0
+    private let maxRestartAttempts = 5
+    private var stopped = false
 
     func start() {
+        stopped = false
+        lock.lock()
+        buffer = Data()
+        latest = [:]
+        sawAnyOutput = false
+        firstLines = []
+        stderrBuffer = Data()
+        didReportHardFailure = false
+        parsedAnyRow = false
+        lock.unlock()
+
         let p = Process()
         // Resolved via PATH rather than a hardcoded /usr/bin or /usr/sbin —
         // both are plausible for nettop and this avoids guessing wrong.
@@ -85,13 +105,29 @@ final class NettopSampler {
             self.lock.lock()
             let stderrText = String(data: self.stderrBuffer, encoding: .utf8) ?? ""
             self.didReportHardFailure = true
+            let wasProducingRows = self.parsedAnyRow
             self.lock.unlock()
             self.watchdogWorkItem?.cancel()
             let detail = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
             let suffix = detail.isEmpty
                 ? "它可能需要更高权限，或此 Mac 上路径不同。"
                 : "nettop 输出：\(detail.suffix(400))"
-            self.onStatusChange?(.unavailable("nettop 已退出（code \(proc.terminationStatus)）。\(suffix)"))
+            let code = proc.terminationStatus
+            DispatchQueue.main.async {
+                guard !self.stopped else { return }
+                if wasProducingRows { self.restartAttempts = 0 }
+                if self.restartAttempts < self.maxRestartAttempts {
+                    self.restartAttempts += 1
+                    self.onStatusChange?(.degraded("nettop 已退出（code \(code)），正在重新启动…"))
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        guard !self.stopped else { return }
+                        self.teardown()
+                        self.start()
+                    }
+                } else {
+                    self.onStatusChange?(.unavailable("nettop 已退出（code \(code)）。\(suffix)"))
+                }
+            }
         }
 
         do {
@@ -106,6 +142,20 @@ final class NettopSampler {
     }
 
     func stop() {
+        stopped = true
+        teardown()
+    }
+
+    /// Drops dead pids so their last counters stop being reported forever —
+    /// and so a reused pid starts from its own counters, not the old ones.
+    func forget(pids: Set<Int32>) {
+        guard !pids.isEmpty else { return }
+        lock.lock()
+        for pid in pids { latest.removeValue(forKey: pid) }
+        lock.unlock()
+    }
+
+    private func teardown() {
         watchdogWorkItem?.cancel()
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         errorPipe?.fileHandleForReading.readabilityHandler = nil
@@ -170,6 +220,7 @@ final class NettopSampler {
                                  command: row.command,
                                  bytesInCumKB: row.bytesIn / 1024,
                                  bytesOutCumKB: row.bytesOut / 1024)
+        parsedAnyRow = true
         lock.unlock()
     }
 

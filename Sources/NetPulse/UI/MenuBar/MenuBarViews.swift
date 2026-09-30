@@ -1,8 +1,10 @@
 import SwiftUI
 import AppKit
 
-/// The always-visible menu bar chip: the top app's ▲/▼ rates plus a mini
-/// 9-bar history sparkline. Matches the design's menu-bar chip (lines
+/// The always-visible menu bar chip: the whole Mac's ▲/▼ rates plus a mini
+/// 9-bar history sparkline. (It used to show only the busiest app's rates,
+/// which read as the machine total but undercounted whenever two apps were
+/// busy; the popover still leads with the busiest app.) Matches the design's menu-bar chip (lines
 /// 30-40 of NetPulse.dc.html) — the rest of that mock's top strip (Apple
 /// menu, app menu items, Wi-Fi/clock) is macOS's own chrome, not something
 /// this app draws.
@@ -17,16 +19,16 @@ struct MenuBarExtraLabel: View {
             // spacing is what actually fits two lines, and is the size other
             // network meters use up here.
             VStack(alignment: .trailing, spacing: 0) {
-                Text("▲ \(Format.rate(engine.topApp?.rateUpKBps ?? 0))")
+                Text("▲ \(Format.rate(engine.totalUpKBps))")
                     .foregroundStyle(Color(hex: 0xFFD479))
-                Text("▼ \(Format.rate(engine.topApp?.rateDownKBps ?? 0))")
+                Text("▼ \(Format.rate(engine.totalDownKBps))")
                     .foregroundStyle(Color(hex: 0x7EC8FF))
             }
             .font(.system(size: 8.5))
             .monospacedDigit()
             .frame(height: 20)
 
-            MiniBars(values: Array((engine.topApp?.downHistory ?? []).suffix(9)))
+            MiniBars(values: Array(engine.totalDownHistory.suffix(9)))
         }
     }
 }
@@ -147,7 +149,20 @@ struct MenuBarPopoverView: View {
             Spacer()
             Button("打开主窗口") {
                 NSApp.activate(ignoringOtherApps: true)
-                openWindow(id: "main")
+                // openWindow on a WindowGroup always adds a window, so each
+                // click used to stack another copy. Bring back the existing
+                // one (SwiftUI names them "main-AppWindow-N") when there is.
+                // A closed window can linger in NSApp.windows without its
+                // content, so only a shown or minimized one is reused.
+                if let existing = NSApp.windows.first(where: {
+                    $0.identifier?.rawValue.hasPrefix("main") == true
+                        && ($0.isVisible || $0.isMiniaturized)
+                }) {
+                    if existing.isMiniaturized { existing.deminiaturize(nil) }
+                    existing.makeKeyAndOrderFront(nil)
+                } else {
+                    openWindow(id: "main")
+                }
             }
             .buttonStyle(.plain)
         }
