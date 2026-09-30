@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- The UI is Chinese; this also makes system-provided names come back
+	     in Chinese where an app has them. -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh_CN</string>
 	<key>CFBundleName</key>
 	<string>NetPulse</string>
 	<key>CFBundleDisplayName</key>

@@ -6,14 +6,18 @@ struct AppListView: View {
     @ObservedObject var engine: NetworkMonitorEngine
 
     var body: some View {
+        let trendScale = engine.trendScaleMax
         VStack(spacing: 0) {
             toolbar
+            if engine.sortMode == .rate {
+                TrafficStackChart(layers: engine.stackLayers(), window: engine.rateWindow)
+            }
             columnHeader
             ScrollView {
                 LazyVStack(spacing: 1) {
                     ForEach(engine.filteredApps) { app in
                         AppRow(app: app, selected: app.id == engine.selectedAppID, sortMode: engine.sortMode,
-                               range: engine.range, window: engine.rateWindow)
+                               range: engine.range, window: engine.rateWindow, trendScale: trendScale)
                             .contentShape(Rectangle())
                             .onTapGesture { engine.select(appID: app.id) }
                     }
@@ -86,7 +90,8 @@ struct AppListView: View {
     @ViewBuilder private var idleToggle: some View {
         let hidden = engine.hiddenIdleCount
         if hidden > 0 || engine.showIdleApps {
-            Button(engine.showIdleApps ? "隐藏从未产生流量的进程" : "显示 \(hidden) 个从未产生流量的进程") {
+            let what = engine.sortMode == .rate ? "空闲的 App（低于 1 KB/s）" : "从未产生流量的进程"
+            Button(engine.showIdleApps ? "隐藏\(what)" : "显示 \(hidden) 个\(what)") {
                 engine.showIdleApps.toggle()
             }
             .buttonStyle(.plain)
@@ -126,6 +131,8 @@ private struct AppRow: View {
     let sortMode: SortMode
     let range: TimeRange
     let window: RateWindow
+    /// Shared top of scale for every row's trend line.
+    let trendScale: Double
 
     /// The window's average, which is what the list is ranked by: a row
     /// showing this second's 0 KB/s beside a 19% share read as a bug.
@@ -162,9 +169,9 @@ private struct AppRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             ZStack {
-                Sparkline(values: Array(app.downHistory.suffix(24)))
+                Sparkline(values: Array(app.downHistory.suffix(24)), scaleMax: trendScale)
                     .stroke(Theme.accentBlue, lineWidth: 1.4)
-                Sparkline(values: Array(app.upHistory.suffix(24)))
+                Sparkline(values: Array(app.upHistory.suffix(24)), scaleMax: trendScale)
                     .stroke(Theme.upOrange, lineWidth: 1.2)
             }
             .frame(width: 68, height: 24)

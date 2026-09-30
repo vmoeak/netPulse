@@ -123,7 +123,7 @@ final class EngineTests: XCTestCase {
         let beta = try XCTUnwrap(app("proc.beta"))
         XCTAssertEqual(beta.rateDownKBps, 0)
         XCTAssertEqual(beta.rateUpKBps, 0)
-        XCTAssertEqual(beta.statusLine, "已退出")
+        XCTAssertEqual(beta.statusLine, "未运行")
         XCTAssertEqual(beta.totalDownKB[.today] ?? 0, 2048, accuracy: 0.001)
         XCTAssertEqual(engine.totalDownKBps, 0, accuracy: 0.001)
     }
@@ -304,5 +304,20 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(app("proc.steady")?.windowDownKBps ?? 0, 500.0 / 7.0, accuracy: 0.001,
                        "averaged over the 7 ticks seen so far")
         XCTAssertEqual(engine.apps.first?.id, "proc.bursty", "a new window re-ranks at once")
+    }
+
+    func testStackAndTopAppsSplitTrafficByApp() throws {
+        let pids = try (0..<7).map { _ in try livePID() }
+        for (n, pid) in pids.enumerated() { feed(pid, "app\(n)", downKB: 0) }
+        engine.tick()
+        for step in 1...3 {
+            // app0 moves the most, app6 the least.
+            for (n, pid) in pids.enumerated() { feed(pid, "app\(n)", downKB: Double(step * (70 - n * 10))) }
+            engine.tick()
+        }
+        let layers = engine.stackLayers(top: 5, buckets: 90)
+        XCTAssertEqual(layers.map(\.name), ["app0", "app1", "app2", "app3", "app4", "其他"])
+        XCTAssertEqual(layers.last?.values.last ?? 0, 20 + 10, accuracy: 0.001, "其他 sums app5 and app6")
+        XCTAssertEqual(engine.topApps(over: .fiveMinutes, count: 3).map(\.app.id), ["proc.app0", "proc.app1", "proc.app2"])
     }
 }

@@ -222,7 +222,7 @@ final class NetworkMonitorEngine: ObservableObject {
     /// What the app list shows: the live apps, plus under 累计流量 the
     /// archived ones that have traffic in the selected range.
     var listedApps: [AppUsage] {
-        let shown = showIdleApps ? apps : apps.filter { !isIdle($0) }
+        let shown = showIdleApps ? apps : apps.filter { !isIdle($0) || $0.id == selectedAppID }
         guard sortMode == .total else { return shown }
         let liveIDs = Set(apps.map(\.id))
         let archived = archivedApps.filter {
@@ -231,16 +231,86 @@ final class NetworkMonitorEngine: ObservableObject {
         return (shown + archived).sorted(by: comparator(for: sortMode, range: range))
     }
 
-    /// How many rows `listedApps` leaves out because they never moved a byte.
+    /// How many rows `listedApps` leaves out as idle.
     var hiddenIdleCount: Int {
-        showIdleApps ? 0 : apps.filter(isIdle).count
+        showIdleApps ? 0 : apps.filter { isIdle($0) && $0.id != selectedAppID }.count
     }
 
-    /// Never moved a byte, in this launch or any saved day. A paused app
-    /// stays listed: its row is where it gets resumed.
+    /// Below this over the rate window, an app is idle under 实时速率.
+    static let idleRateKBps = 1.0
+
+    /// Under 实时速率: under 1 KB/s over the window, so the list holds only
+    /// what is using the network. Under 累计流量: never moved a byte, in
+    /// this launch or any saved day. A paused app stays listed either way:
+    /// its row is where it gets resumed.
     func isIdle(_ app: AppUsage) -> Bool {
-        !app.isPaused && app.rateDownKBps + app.rateUpKBps == 0
+        guard !app.isPaused else { return false }
+        if sortMode == .rate {
+            return app.windowDownKBps + app.windowUpKBps < Self.idleRateKBps
+                && app.rateDownKBps + app.rateUpKBps < Self.idleRateKBps
+        }
+        return app.rateDownKBps + app.rateUpKBps == 0
             && (app.totalDownKB[.all] ?? 0) + (app.totalUpKB[.all] ?? 0) == 0
+    }
+
+    /// Top of scale for the list's trend lines: the busiest of them, so a
+    /// trickle no longer draws as tall as a download.
+    var trendScaleMax: Double {
+        let peak = listedApps.lazy.flatMap { $0.downHistory.suffix(24) + $0.upHistory.suffix(24) }.max() ?? 0
+        return max(peak, 1)
+    }
+
+    /// The `count` apps that moved the most over `window`, with their
+    /// average rates; for the popover, independent of the list's window.
+    func topApps(over window: RateWindow, count: Int) -> [(app: AppUsage, downKBps: Double, upKBps: Double)] {
+        let span = max(1, min(window.seconds, tickCount))
+        return countedApps.map { app in
+            (app, app.downHistory.suffix(span).reduce(0, +) / Double(span),
+             app.upHistory.suffix(span).reduce(0, +) / Double(span))
+        }
+        .filter { $0.1 + $0.2 >= Self.idleRateKBps }
+        .sorted { $0.1 + $0.2 > $1.1 + $1.2 }
+        .prefix(count)
+        .map { $0 }
+    }
+
+    /// One layer of the stacked traffic chart.
+    struct StackLayer: Identifiable {
+        var id: String
+        var name: String
+        /// Down + up KB/s per time bucket, oldest first.
+        var values: [Double]
+    }
+
+    /// The machine's traffic over `rateWindow`, split into the top apps
+    /// plus 其他, averaged into at most `buckets` points. A proxy is left
+    /// out: its bytes are the other apps' again.
+    func stackLayers(top: Int = 5, buckets: Int = 90) -> [StackLayer] {
+        let span = max(2, min(rateWindow.seconds, tickCount))
+        let perBucket = max(1, Int((Double(span) / Double(buckets)).rounded(.up)))
+        func bucketed(_ app: AppUsage) -> [Double] {
+            let down = Array(app.downHistory.suffix(span)), up = Array(app.upHistory.suffix(span))
+            // Apps seen for less than the window are padded with leading zeros.
+            let series = Array(repeating: 0.0, count: span - down.count)
+                + zip(down, up + Array(repeating: 0, count: max(0, down.count - up.count))).map { $0 + $1 }
+            return stride(from: 0, to: series.count, by: perBucket).map { start in
+                let chunk = series[start..<min(start + perBucket, series.count)]
+                return chunk.reduce(0, +) / Double(chunk.count)
+            }
+        }
+        let ranked = countedApps.map { (app: $0, series: bucketed($0)) }
+            .filter { $0.series.contains { $0 > 0 } }
+            .sorted { $0.series.reduce(0, +) > $1.series.reduce(0, +) }
+        var layers = ranked.prefix(top).map { StackLayer(id: $0.app.id, name: $0.app.name, values: $0.series) }
+        let rest = ranked.dropFirst(top)
+        if let first = rest.first {
+            var other = first.series
+            for entry in rest.dropFirst() {
+                for i in other.indices where i < entry.series.count { other[i] += entry.series[i] }
+            }
+            layers.append(StackLayer(id: "__other", name: "其他", values: other))
+        }
+        return layers
     }
 
     var filteredApps: [AppUsage] {
@@ -470,7 +540,9 @@ final class NetworkMonitorEngine: ObservableObject {
         guard paused || everMoved else { return nil }
         var usage = existing
         usage.isPaused = paused
-        usage.statusLine = paused ? "已暂停统计" : "已退出"
+        // The same word history rows use: whether it quit during this launch
+        // or before it, the app isn't running now.
+        usage.statusLine = paused ? "已暂停统计" : "未运行"
         usage.rateDownKBps = 0
         usage.rateUpKBps = 0
         usage.downHistory = Array((usage.downHistory + [0]).suffix(Self.historyLength))
@@ -531,7 +603,7 @@ final class NetworkMonitorEngine: ObservableObject {
             var usage = AppUsage(
                 id: id, name: name, bundleID: id,
                 badge: AppPalette.badge(bundleID: id, name: name),
-                connectionCount: 0, statusLine: "本次启动后未运行",
+                connectionCount: 0, statusLine: "未运行",
                 rateDownKBps: 0, rateUpKBps: 0,
                 totalDownKB: [:], totalUpKB: [:],
                 downHistory: [], upHistory: [], domains: [],

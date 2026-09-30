@@ -84,8 +84,24 @@ enum ProcessDirectory {
             let key = "proc." + cleaned
             return Identity(id: key, name: cleaned, bundleID: key, statusHint: statusHint)
         }
-        let name = app.localizedName.map { sanitizedCommand($0, pid: pid) } ?? bundleID
+        let name = (app.bundleURL.flatMap(preferredDisplayName(ofBundleAt:)) ?? app.localizedName)
+            .map { sanitizedCommand($0, pid: pid) } ?? bundleID
         return Identity(id: bundleID, name: name, bundleID: bundleID, statusHint: statusHint)
+    }
+
+    /// The app's name in the user's language. `localizedName` picks the
+    /// localization that matches NetPulse's own, so an app with a Chinese
+    /// name (QQ 电脑管家's helper, 「办公安全感知」) showed its English one.
+    static func preferredDisplayName(ofBundleAt url: URL) -> String? {
+        guard let bundle = Bundle(url: url) else { return nil }
+        let localizations = bundle.localizations.filter { $0 != "Base" }
+        for localization in Bundle.preferredLocalizations(from: localizations, forPreferences: Locale.preferredLanguages) {
+            guard let path = bundle.path(forResource: "InfoPlist", ofType: "strings", inDirectory: nil,
+                                         forLocalization: localization),
+                  let strings = NSDictionary(contentsOfFile: path) as? [String: String] else { continue }
+            if let name = strings["CFBundleDisplayName"] ?? strings["CFBundleName"], !name.isEmpty { return name }
+        }
+        return nil
     }
 
     /// Walks up from `pid` looking for an ancestor that is a real application

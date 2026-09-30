@@ -93,6 +93,8 @@ struct MenuBarPopoverView: View {
             hairline
             list
             hairline
+            recentTop
+            hairline
             footer
         }
         .frame(width: 340)
@@ -171,6 +173,37 @@ struct MenuBarPopoverView: View {
             }
         }
         .padding(8)
+    }
+
+    /// Who used the most over the last five minutes, which the live list
+    /// above can't answer.
+    private var recentTop: some View {
+        let top = engine.topApps(over: .fiveMinutes, count: 3)
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("近 5 分钟占用最多")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.62))
+            if top.isEmpty {
+                Text("这段时间没有明显流量").font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.5))
+            }
+            ForEach(Array(top.enumerated()), id: \.element.app.id) { index, entry in
+                HStack(spacing: 8) {
+                    Text("\(index + 1)").foregroundStyle(.white.opacity(0.5)).frame(width: 12)
+                    IconBadge(badge: entry.app.badge, size: 18, cornerRadius: 5, fontSize: 8)
+                    Text(entry.app.name).foregroundStyle(.white.opacity(0.94)).lineLimit(1)
+                    Spacer()
+                    Text("▼ \(Format.rate(entry.downKBps))")
+                        .foregroundStyle(Color(hex: 0x7EC8FF))
+                        .frame(width: 74, alignment: .trailing)
+                    Text("▲ \(Format.rate(entry.upKBps))")
+                        .foregroundStyle(Color(hex: 0xFFD479))
+                        .frame(width: 74, alignment: .trailing)
+                }
+                .font(.system(size: 11.5))
+                .monospacedDigit()
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 10)
     }
 
     private var footer: some View {
