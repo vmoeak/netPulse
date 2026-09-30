@@ -39,11 +39,18 @@ jobs:
           NETPULSE_SELFTEST_SECONDS=30 perl -e 'alarm 90; exec @ARGV' \
             dist/NetPulse.app/Contents/MacOS/NetPulse > selftest.json &
           APP=$!
+          # The same nettop invocation the app uses, logged raw, so a failed
+          # check shows what nettop actually printed for curl.
+          perl -e 'alarm 40; exec @ARGV' nettop -P -x -l 0 -s 1 -J bytes_in,bytes_out > nettop.log 2>&1 &
           sleep 5
           curl -sSL --limit-rate 300k --max-time 10 -o /dev/null \
             https://download.swift.org/swift-5.10-release/xcode/swift-5.10-RELEASE/swift-5.10-RELEASE-osx.pkg || true
           wait $APP
-          python3 scripts/check-selftest.py selftest.json
+          if ! python3 scripts/check-selftest.py selftest.json; then
+            echo "--- first nettop lines ---"; head -n 8 nettop.log
+            echo "--- nettop rows for curl ---"; grep -i curl nettop.log | head -n 40
+            exit 1
+          fi
 
       # upload-artifact rewrites every file to 644/755 and would take
       # dist/NetPulse.app's *contents* as the archive root, so a downloaded
