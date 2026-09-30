@@ -32,7 +32,7 @@ struct DomainsOverviewView: View {
             }
         }
         .frame(minWidth: PaneWidth.detailMin, maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.white)
+        .background(Theme.contentBackground)
     }
 
     private var columnHeader: some View {
@@ -70,7 +70,7 @@ private struct DomainRollupRow: View {
 
             Text("↓ \(Format.rate(rollup.rateDownKBps))")
                 .frame(width: 104, alignment: .trailing)
-                .foregroundStyle(Color(hex: 0x4A4A4F))
+                .foregroundStyle(Theme.textMuted)
             Text(Format.size(rollup.totalDownKB))
                 .frame(width: 96, alignment: .trailing)
                 .foregroundStyle(Theme.textPrimary)

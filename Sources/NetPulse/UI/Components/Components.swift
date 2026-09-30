@@ -90,7 +90,7 @@ struct IconBadge: View {
     }
 }
 
-/// One of the four stat cells at the top of the detail pane.
+/// One of the four stat cards at the top of the detail pane.
 struct StatTile: View {
     let label: String
     let value: String
@@ -104,10 +104,10 @@ struct StatTile: View {
                 .foregroundStyle(valueColor)
                 .monospacedDigit()
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white)
+        .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
     }
 }
 
@@ -118,7 +118,7 @@ struct RangeDot: View {
 
     var body: some View {
         Circle()
-            .fill(selected ? color : Color.black.opacity(0.14))
+            .fill(selected ? color : Color.primary.opacity(0.18))
             .frame(width: 8, height: 8)
             .overlay(
                 Circle()

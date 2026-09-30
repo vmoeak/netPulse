@@ -29,7 +29,7 @@ struct ConnectionsView: View {
             }
         }
         .frame(minWidth: PaneWidth.detailMin, maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.white)
+        .background(Theme.contentBackground)
     }
 
     private var columnHeader: some View {
@@ -74,7 +74,7 @@ private struct ConnectionRowView: View {
 
             Text("↓ \(Format.rate(row.rateDownKBps))")
                 .frame(width: 110, alignment: .trailing)
-                .foregroundStyle(Color(hex: 0x4A4A4F))
+                .foregroundStyle(Theme.textMuted)
             Text("\(row.connectionCount)")
                 .frame(width: 56, alignment: .trailing)
                 .foregroundStyle(Theme.textSecondary)

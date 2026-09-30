@@ -45,8 +45,11 @@ local distribution works fine.
 
 ## CI
 
-`.github/workflows/build.yml` builds on a `macos-14` GitHub Actions runner
-on every push and uploads `NetPulse.app` as a build artifact — useful for
+`.github/workflows/build.yml` builds on `macos-26` and `macos-14` GitHub
+Actions runners on every push. The `macos-26` build uses the Xcode 26 SDK and
+so draws the interface in Liquid Glass on macOS 26; `macos-14` keeps the
+frosted-material fallback for older macOS compiling. Each uploads
+`NetPulse.app` as a build artifact (`NetPulse-app` is the macOS 26 one) — useful for
 catching compile errors even without a local Mac.
 
 The bundle is zipped with `ditto` before upload so it survives the trip

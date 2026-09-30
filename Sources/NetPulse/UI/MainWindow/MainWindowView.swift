@@ -6,7 +6,8 @@ import SwiftUI
 /// than this lays the panes out at these widths anyway and overflows,
 /// clipping the sidebar and the detail pane instead of compressing them.
 enum PaneWidth {
-    static let sidebar: CGFloat = 216
+    /// The column the floating glass sidebar sits in, gutters included.
+    static let sidebar: CGFloat = 232
     static let listMin: CGFloat = 360
     static let listIdeal: CGFloat = 472
     static let listMax: CGFloat = 560
@@ -16,9 +17,13 @@ enum PaneWidth {
 }
 
 /// Root of the main window. 所有 App keeps the design's three-column
-/// 216 / 472 / flexible layout; the other two sidebar sections are
+/// sidebar / 472 / flexible layout; the other two sidebar sections are
 /// machine-wide lists with no per-app detail to show, so they take the
 /// whole width to the right of the sidebar.
+///
+/// The window is laid out the macOS 26 way: the title bar is hidden, the
+/// desktop shows blurred through the window, and the sidebar floats on it as
+/// a pane of Liquid Glass with the traffic lights set into its top.
 struct MainWindowView: View {
     @ObservedObject var engine: NetworkMonitorEngine
     @Environment(\.openWindow) private var openWindow
@@ -36,6 +41,10 @@ struct MainWindowView: View {
                 DomainsOverviewView(engine: engine)
             }
         }
+        .background(WindowBackdrop())
+        // The panes run up under the hidden title bar; their 52pt headers
+        // are sized to hold it.
+        .ignoresSafeArea(.container, edges: .top)
         .frame(idealWidth: 1280, idealHeight: 820)
         .background(WindowFloor(size: NSSize(width: PaneWidth.windowMin,
                                              height: PaneWidth.windowMinHeight)))

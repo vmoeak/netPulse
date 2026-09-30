@@ -28,7 +28,7 @@ struct AppDetailView: View {
         // PaneWidth.detailMin is what the domain table's fixed columns plus
         // their padding occupy; below it the right-hand columns get cut off.
         .frame(minWidth: PaneWidth.detailMin, maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.white)
+        .background(Theme.contentBackground)
     }
 
     private func header(_ app: AppUsage) -> some View {
@@ -42,25 +42,28 @@ struct AppDetailView: View {
             // Pausing only stops counting; the app's traffic is untouched,
             // which "暂停该 App" did not make clear.
             // A paused app that isn't running still needs a way to resume.
-            if app.isLive || app.isPaused {
-                Button(app.isPaused ? "恢复统计" : "暂停统计") {
-                    engine.togglePause(appID: app.id)
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.horizontal, 11).padding(.vertical, 4)
-                .background(Color.black.opacity(0.055))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
+            GlassGroup(spacing: 8) {
+                HStack(spacing: 8) {
+                    if app.isLive || app.isPaused {
+                        Button {
+                            engine.togglePause(appID: app.id)
+                        } label: {
+                            Label(app.isPaused ? "恢复统计" : "暂停统计",
+                                  systemImage: app.isPaused ? "play.fill" : "pause.fill")
+                        }
+                        .glassButton()
+                    }
 
-            Button("导出报告") { exportReport(app) }
-                .buttonStyle(.plain)
-                .font(.system(size: 11.5))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 11).padding(.vertical, 4)
-                .background(Theme.accentBlue)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                    Button {
+                        exportReport(app)
+                    } label: {
+                        Label("导出报告", systemImage: "square.and.arrow.up")
+                    }
+                    .glassButton(prominent: true)
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                .controlSize(.regular)
+            }
         }
         .padding(.horizontal, 22)
         .frame(height: 52)
@@ -68,15 +71,15 @@ struct AppDetailView: View {
     }
 
     private func statGrid(_ app: AppUsage) -> some View {
-        let cols = Array(repeating: GridItem(.flexible(), spacing: 1), count: 4)
-        return LazyVGrid(columns: cols, spacing: 1) {
+        let cols = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
+        return LazyVGrid(columns: cols, spacing: 10) {
             StatTile(label: "实时下载", value: Format.rate(app.rateDownKBps), valueColor: Theme.accentBlue)
             StatTile(label: "实时上传", value: Format.rate(app.rateUpKBps), valueColor: Theme.upOrangeText)
             StatTile(label: "累计下载 · \(engine.range.label)", value: Format.size(app.totalDownKB[engine.range] ?? 0))
             StatTile(label: "累计上传 · \(engine.range.label)", value: Format.size(app.totalUpKB[engine.range] ?? 0))
         }
-        .background(Theme.hairline)
-        .overlay(Rectangle().fill(Theme.hairline).frame(height: 0.5), alignment: .bottom)
+        .padding(.horizontal, 22)
+        .padding(.top, 14)
     }
 
     private func throughputSection(_ app: AppUsage) -> some View {
@@ -100,7 +103,8 @@ struct AppDetailView: View {
                 .foregroundStyle(Theme.textSecondary)
             }
             ZStack {
-                LinearGradient(colors: [Color(hex: 0xF7F9FC), .white], startPoint: .top, endPoint: .bottom)
+                LinearGradient(colors: [Theme.accentBlue.opacity(0.06), Theme.fill.opacity(0.4)],
+                               startPoint: .top, endPoint: .bottom)
                 SparklineArea(values: down).fill(Theme.accentBlue.opacity(0.13))
                 Sparkline(values: down).stroke(Theme.accentBlue, lineWidth: 1.8)
                 Sparkline(values: up).stroke(Theme.upOrange, lineWidth: 1.5)
@@ -109,15 +113,16 @@ struct AppDetailView: View {
                 }
             }
             .frame(height: 120)
-            .clipShape(RoundedRectangle(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.hairline, lineWidth: 0.5))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous)
+                .stroke(Theme.hairline, lineWidth: 0.5))
         }
         .padding(.horizontal, 22).padding(.top, 16).padding(.bottom, 10)
     }
 
     private func legend(color: Color, label: String) -> some View {
         HStack(spacing: 5) {
-            RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 8, height: 8)
+            Capsule().fill(color).frame(width: 10, height: 4)
             Text(label)
         }
     }
@@ -254,7 +259,7 @@ private struct DomainRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             Text("↓ \(Format.rate(domain.rateDownKBps))")
                 .frame(width: 84, alignment: .trailing)
-                .foregroundStyle(Color(hex: 0x4A4A4F))
+                .foregroundStyle(Theme.textMuted)
             Text(Format.size(domain.totalDownKB))
                 .frame(width: 80, alignment: .trailing)
                 .foregroundStyle(Theme.textPrimary)
@@ -275,7 +280,7 @@ private struct DomainRow: View {
                     .frame(width: geo.size.width * min(1, domain.totalDownKB / max(maxTotalDown, 1)))
             }
         )
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 

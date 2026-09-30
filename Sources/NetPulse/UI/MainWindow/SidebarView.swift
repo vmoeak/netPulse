@@ -3,13 +3,14 @@ import SwiftUI
 /// Left nav column: matches lines 86-152 of NetPulse.dc.html — nav items,
 /// the colored-dot time-range picker, and the bottom download/upload
 /// totals with progress bars. Traffic-light window controls aren't drawn
-/// here; they're the real ones the OS provides for the window.
+/// here; they're the real ones the OS provides for the window, and the
+/// sidebar is a floating pane of glass with room left at its top for them.
 struct SidebarView: View {
     @ObservedObject var engine: NetworkMonitorEngine
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 sectionLabel("监控")
 
                 ForEach(SidebarSection.allCases) { section in
@@ -24,22 +25,24 @@ struct SidebarView: View {
                 sectionLabel("统计区间").padding(.top, 14)
 
                 ForEach(TimeRange.allCases) { range in
+                    let selected = engine.range == range
                     HStack(spacing: 9) {
-                        RangeDot(color: range.dotColor, selected: engine.range == range)
+                        RangeDot(color: range.dotColor, selected: selected)
                         Text(range.label)
-                            .font(.system(size: 13, weight: engine.range == range ? .semibold : .regular))
+                            .font(.system(size: 13, weight: selected ? .semibold : .regular))
                             .foregroundStyle(Theme.textPrimary)
                     }
                     .padding(.horizontal, 8).padding(.vertical, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(engine.range == range ? Color.black.opacity(0.075) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .background(selected ? Theme.fillStrong : Color.clear,
+                                in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
                     .contentShape(Rectangle())
                     .onTapGesture { engine.range = range }
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 6)
+            .padding(.horizontal, 8)
+            // Clears the traffic lights, which sit on the glass.
+            .padding(.top, 40)
 
             Spacer(minLength: 0)
 
@@ -48,12 +51,15 @@ struct SidebarView: View {
                 totalsRow(label: "上传", value: Format.rate(engine.totalUpKBps), valueColor: Theme.upOrangeTextAlt, barColor: Theme.upOrange, trackColor: Theme.upOrange.opacity(0.16), fraction: engine.totalUpPct)
                 statusLine
             }
-            .padding(14)
-            .overlay(Rectangle().fill(Theme.hairline).frame(height: 0.5), alignment: .top)
+            .padding(12)
+            .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+            .padding(8)
         }
-        .frame(width: 216)
-        .background(Theme.sidebarBackground)
-        .overlay(Rectangle().fill(Theme.hairline).frame(width: 0.5), alignment: .trailing)
+        .frame(maxHeight: .infinity)
+        .glassSurface(in: RoundedRectangle(cornerRadius: Theme.panelRadius, style: .continuous))
+        // Floats clear of the window's edges, like the macOS 26 sidebar.
+        .padding(8)
+        .frame(width: PaneWidth.sidebar)
     }
 
     private func badgeCount(for section: SidebarSection) -> String {
@@ -126,8 +132,9 @@ private struct NavRow: View {
         }
         .foregroundStyle(selected ? .white : Theme.textPrimary)
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(selected ? Theme.accentBlue : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.vertical, 7)
+        .background(selected ? Theme.accentBlue : Color.clear,
+                    in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
+        .shadow(color: Theme.accentBlue.opacity(selected ? 0.35 : 0), radius: 6, y: 2)
     }
 }

@@ -97,25 +97,13 @@ struct MenuBarPopoverView: View {
         }
         .frame(width: 340)
         .foregroundStyle(.white)
-        .background {
-            // The whole card is written white-on-dark, like the design's
-            // menu-bar panel. `.ultraThinMaterial` on its own renders *light*
-            // in Light Appearance, which left white text on a near-white
-            // frosted panel — hence the washed-out look. Tint the material
-            // dark so the panel matches what the content assumes, whichever
-            // appearance the Mac is in.
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(hex: 0x14141A).opacity(0.86))
-            }
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-        )
-        // Keeps the material (and anything semantic inside) on its dark
+        // The whole card is written white-on-dark, like the design's
+        // menu-bar panel, so the glass is tinted dark: plain glass (or
+        // `.ultraThinMaterial` before macOS 26) renders *light* in Light
+        // Appearance and washed the white text out.
+        .glassSurface(in: RoundedRectangle(cornerRadius: 20, style: .continuous),
+                      tint: Color(hex: 0x14141A).opacity(0.55))
+        // Keeps the glass (and anything semantic inside) on its dark
         // variant even when the system is in Light Appearance.
         .environment(\.colorScheme, .dark)
     }
@@ -144,11 +132,14 @@ struct MenuBarPopoverView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .monospacedDigit()
                 }
+                .padding(12)
+                .background(Color.white.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
                 Text("暂无数据").font(.system(size: 12)).foregroundStyle(.white.opacity(0.62))
             }
         }
-        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
+        .padding(.horizontal, 12).padding(.top, 14).padding(.bottom, 10)
     }
 
     private var list: some View {
@@ -170,7 +161,7 @@ struct MenuBarPopoverView: View {
                 .padding(.horizontal, 8).padding(.vertical, 6)
             }
         }
-        .padding(8)
+        .padding(.horizontal, 8).padding(.vertical, 4)
     }
 
     private var footer: some View {
@@ -178,7 +169,8 @@ struct MenuBarPopoverView: View {
             Text("全部合计 ▼ \(Format.rate(engine.totalDownKBps))  ▲ \(Format.rate(engine.totalUpKBps))")
             Spacer()
             Button("打开主窗口") { MainWindowOpener.open(using: openWindow) }
-            .buttonStyle(.plain)
+                .glassButton()
+                .controlSize(.small)
         }
         .font(.system(size: 11.5))
         .foregroundStyle(.white.opacity(0.72))
@@ -186,6 +178,6 @@ struct MenuBarPopoverView: View {
     }
 
     private var hairline: some View {
-        Rectangle().fill(Color.white.opacity(0.14)).frame(height: 0.5)
+        Rectangle().fill(Color.white.opacity(0.12)).frame(height: 0.5).padding(.horizontal, 16)
     }
 }

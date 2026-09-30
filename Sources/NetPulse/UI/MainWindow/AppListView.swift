@@ -34,55 +34,42 @@ struct AppListView: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                TextField("搜索 App", text: $engine.searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 24)
-            .background(Color.black.opacity(0.055))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .frame(maxWidth: .infinity)
-
-            HStack(spacing: 2) {
-                sortButton("实时速率", .rate)
-                sortButton("累计流量", .total)
-            }
-            .padding(2)
-            .background(Color.black.opacity(0.055))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-
-            if engine.sortMode == .rate {
-                Picker("", selection: $engine.rateWindow) {
-                    ForEach(RateWindow.allCases) { Text($0.label).tag($0) }
+        GlassGroup(spacing: 10) {
+            HStack(spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    TextField("搜索 App", text: $engine.searchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
                 }
-                .pickerStyle(.menu)
+                .padding(.horizontal, 11)
+                .frame(height: 28)
+                .glassSurface(in: Capsule(), interactive: true)
+                .frame(maxWidth: .infinity)
+
+                // The system segmented control: on macOS 26 it is drawn in
+                // Liquid Glass, with the selection sliding between segments.
+                Picker("", selection: $engine.sortMode) {
+                    Text("实时速率").tag(SortMode.rate)
+                    Text("累计流量").tag(SortMode.total)
+                }
+                .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
-                .help("按这段时间内的平均速率排序")
+
+                if engine.sortMode == .rate {
+                    Picker("", selection: $engine.rateWindow) {
+                        ForEach(RateWindow.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help("按这段时间内的平均速率排序")
+                }
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 14)
         .frame(height: 52)
-        .background(Theme.paneBackground.opacity(0.9))
-        .overlay(Rectangle().fill(Theme.hairline).frame(height: 0.5), alignment: .bottom)
-    }
-
-    private func sortButton(_ title: String, _ mode: SortMode) -> some View {
-        let active = engine.sortMode == mode
-        return Text(title)
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(Theme.textPrimary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 3)
-            .background(active ? Color.white : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            .shadow(color: .black.opacity(active ? 0.18 : 0), radius: 1, y: 1)
-            .contentShape(Rectangle())
-            .onTapGesture { engine.sortMode = mode }
     }
 
     @ViewBuilder private var idleToggle: some View {
@@ -145,7 +132,7 @@ private struct AppRow: View {
                     HStack(spacing: 6) {
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
-                                Capsule().fill(Color.black.opacity(0.06))
+                                Capsule().fill(Theme.fillStrong)
                                 Capsule().fill(Theme.accentBlue.opacity(0.75))
                                     .frame(width: max(2, geo.size.width * app.windowShare))
                             }
@@ -182,8 +169,12 @@ private struct AppRow: View {
         .font(.system(size: 12, weight: .semibold))
         .monospacedDigit()
         .padding(7)
-        .background(selected ? Theme.accentBlue.opacity(0.10) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .background(selected ? Theme.accentBlue.opacity(0.14) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous)
+                .stroke(Theme.accentBlue.opacity(selected ? 0.28 : 0), lineWidth: 0.5)
+        }
         .opacity(app.isPaused ? 0.5 : 1)
     }
 }
