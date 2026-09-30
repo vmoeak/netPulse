@@ -138,8 +138,6 @@ struct AppDetailView: View {
 
             HStack {
                 Text("域名").frame(maxWidth: .infinity, alignment: .leading)
-                // Per-host rates split the app's rate by connection count;
-                // nettop reports no per-connection bytes.
                 Text("实时").frame(width: 84, alignment: .trailing)
                     .help("按每条连接实测的字节数，每 3 秒更新")
                 // Host totals count from this launch, unlike the tiles above,
@@ -162,13 +160,16 @@ struct AppDetailView: View {
                 Spacer()
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 1) {
-                        ForEach(domains) { d in
+                    // Not lazy, and the two lists keyed apart: a host and a
+                    // site with the same name shared an id, and a stale host
+                    // row was left drawn over the site list.
+                    VStack(spacing: 1) {
+                        ForEach(domains, id: \.host) { d in
                             DomainRow(domain: d, maxTotalDown: maxTotalDown)
                         }
                         if !visits.isEmpty {
                             proxyVisitsHeader(count: visits.count, isProxy: app.isProxy)
-                            ForEach(visits) { ProxyVisitRow(visit: $0) }
+                            ForEach(visits.map { ("site:" + $0.host, $0) }, id: \.0) { ProxyVisitRow(visit: $0.1) }
                         }
                     }
                     .padding(.top, 3)

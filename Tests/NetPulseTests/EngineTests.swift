@@ -134,6 +134,11 @@ final class EngineTests: XCTestCase {
         engine.ingestConnections(ConnectionSnapshot(connections: [], listeners: [:]))
         engine.tick()
 
+        let host = try XCTUnwrap(app("proc.alpha")?.domains.first, "a host with traffic stays listed")
+        XCTAssertEqual(host.totalDownKB, 300, accuracy: 0.001)
+        XCTAssertEqual(host.connectionCount, 0)
+        XCTAssertTrue(engine.connectionRows.isEmpty)
+
         let rollup = try XCTUnwrap(engine.domainRollups.first)
         XCTAssertEqual(rollup.totalDownKB, 300, accuracy: 0.001)
         XCTAssertEqual(rollup.connectionCount, 0)

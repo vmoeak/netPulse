@@ -182,7 +182,9 @@ final class NetworkMonitorEngine: ObservableObject {
                 "todayDownKB": app.totalDownKB[.today] ?? 0,
                 "todayUpKB": app.totalUpKB[.today] ?? 0,
                 "connections": app.connectionCount,
-                "hosts": app.domains.map(\.host),
+                // Hosts in use now; ones that only keep this launch's
+                // totals don't count.
+                "hosts": app.domains.filter { $0.connectionCount > 0 || $0.rateDownKBps > 0 }.map(\.host),
             ]
         }
         var report: [String: Any] = [
@@ -347,7 +349,9 @@ final class NetworkMonitorEngine: ObservableObject {
     func sortedDomains(of app: AppUsage) -> [DomainUsage] {
         switch sortMode {
         case .rate:
-            return app.domains.sorted { ($0.rateDownKBps, $0.connectionCount) > ($1.rateDownKBps, $1.connectionCount) }
+            return app.domains.sorted {
+                ($0.rateDownKBps, $0.connectionCount, $0.totalDownKB) > ($1.rateDownKBps, $1.connectionCount, $1.totalDownKB)
+            }
         case .total:
             return app.domains.sorted { ($0.totalDownKB, $0.totalUpKB) > ($1.totalDownKB, $1.totalUpKB) }
         }
@@ -375,7 +379,7 @@ final class NetworkMonitorEngine: ObservableObject {
     /// busiest first.
     var connectionRows: [ConnectionRow] {
         apps.flatMap { app in
-            app.domains.map { domain in
+            app.domains.filter { $0.connectionCount > 0 || $0.rateDownKBps > 0 }.map { domain in
                 ConnectionRow(appID: app.id,
                               appName: app.name,
                               badge: app.badge,
@@ -576,7 +580,14 @@ final class NetworkMonitorEngine: ObservableObject {
         usage.rateUpKBps = 0
         usage.downHistory = Array((usage.downHistory + [0]).suffix(Self.historyLength))
         usage.upHistory = Array((usage.upHistory + [0]).suffix(Self.historyLength))
-        usage.domains = []
+        // Its hosts stay with what they carried this launch; nothing is open
+        // or moving any more.
+        usage.domains = usage.domains.map { domain in
+            var domain = domain
+            domain.rateDownKBps = 0
+            domain.connectionCount = 0
+            return domain
+        }
         usage.connectionCount = 0
         return usage
     }
@@ -832,14 +843,16 @@ final class NetworkMonitorEngine: ObservableObject {
         }
         usage.connectionCount = connCounts.values.reduce(0, +)
 
-        // Rows are the endpoints open or moving now. Several IPs of one
-        // service often reverse-resolve to the same name; they are one row,
-        // and two rows would share an id in the lists.
+        // Rows are the endpoints open or moving now, and every one that has
+        // carried traffic this launch: a download's host staying listed
+        // after its connection closes is the point of the breakdown.
+        // Several IPs of one service often reverse-resolve to the same name;
+        // they are one row, and two rows would share an id in the lists.
         var byHost: [String: DomainUsage] = [:]
         var shown = Set(connCounts.keys).union(tickKB.keys)
-        // Closed connections are part of the app's total, so their row
-        // stays once there is something in it.
-        if appHostTotals[Self.closedEndpoint] != nil { shown.insert(Self.closedEndpoint) }
+        for (endpoint, totals) in appHostTotals where totals.downKB + totals.upKB >= 1 {
+            shown.insert(endpoint)
+        }
         for endpoint in shown {
             let (host, kind) = describe(endpoint: endpoint)
             var row = byHost[host] ?? DomainUsage(host: host, kind: kind, rateDownKBps: 0,
@@ -861,7 +874,9 @@ final class NetworkMonitorEngine: ObservableObject {
             byHost[host]?.totalDownKB = totals.downKB
             byHost[host]?.totalUpKB = totals.upKB
         }
-        usage.domains = byHost.values.sorted { $0.connectionCount > $1.connectionCount }
+        usage.domains = byHost.values
+            .filter { $0.connectionCount > 0 || $0.rateDownKBps > 0 || $0.totalDownKB + $0.totalUpKB >= 1 }
+            .sorted { $0.connectionCount > $1.connectionCount }
 
         refreshTotals(&usage)
         return usage
