@@ -41,15 +41,18 @@ struct AppDetailView: View {
             Spacer()
             // Pausing only stops counting; the app's traffic is untouched,
             // which "暂停该 App" did not make clear.
-            Button(app.isPaused ? "恢复统计" : "暂停统计") {
-                engine.togglePause(appID: app.id)
+            // A paused app that isn't running still needs a way to resume.
+            if app.isLive || app.isPaused {
+                Button(app.isPaused ? "恢复统计" : "暂停统计") {
+                    engine.togglePause(appID: app.id)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 11).padding(.vertical, 4)
+                .background(Color.black.opacity(0.055))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
             }
-            .buttonStyle(.plain)
-            .font(.system(size: 11.5))
-            .foregroundStyle(Theme.textPrimary)
-            .padding(.horizontal, 11).padding(.vertical, 4)
-            .background(Color.black.opacity(0.055))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
 
             Button("导出报告") { exportReport(app) }
                 .buttonStyle(.plain)
@@ -141,7 +144,7 @@ struct AppDetailView: View {
             .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
 
             if app.domains.isEmpty {
-                Text("暂无活跃连接").font(.system(size: 12)).foregroundStyle(Theme.textTertiary).padding(.top, 16)
+                Text(app.isLive ? "暂无活跃连接" : "本次启动后未运行，只有历史累计").font(.system(size: 12)).foregroundStyle(Theme.textTertiary).padding(.top, 16)
                 Spacer()
             } else {
                 ScrollView {

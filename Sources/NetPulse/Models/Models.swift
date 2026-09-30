@@ -139,8 +139,11 @@ struct AppUsage: Identifiable, Equatable {
     var upHistory: [Double]
     var domains: [DomainUsage]
     var isPaused: Bool
+    /// False for a row rebuilt from saved history for an app that hasn't
+    /// run this launch — it has totals but no rates, hosts or pause control.
+    var isLive: Bool = true
 
-    var meta: String { "\(statusLine) · \(connectionCount) 个连接" }
+    var meta: String { isLive ? "\(statusLine) · \(connectionCount) 个连接" : statusLine }
 
     static func == (lhs: AppUsage, rhs: AppUsage) -> Bool {
         lhs.id == rhs.id
@@ -153,5 +156,6 @@ struct AppUsage: Identifiable, Equatable {
             && lhs.upHistory == rhs.upHistory
             && lhs.domains == rhs.domains
             && lhs.isPaused == rhs.isPaused
+            && lhs.isLive == rhs.isLive
     }
 }

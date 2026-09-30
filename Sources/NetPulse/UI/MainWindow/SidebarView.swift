@@ -58,7 +58,7 @@ struct SidebarView: View {
 
     private func badgeCount(for section: SidebarSection) -> String {
         switch section {
-        case .apps: return "\(engine.apps.count)"
+        case .apps: return "\(engine.listedApps.count)"
         case .connections: return "\(engine.connectionCount)"
         case .domains: return "\(engine.domainRollups.count)"
         }

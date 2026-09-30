@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 private let pausedAppsDefaultsKey = "pausedAppIDs"
 
@@ -20,6 +20,10 @@ final class NetworkMonitorEngine: ObservableObject {
     /// menu bar chip draws and what the sidebar meters are scaled against.
     @Published private(set) var totalDownHistory: [Double] = []
     @Published private(set) var totalUpHistory: [Double] = []
+    /// Apps with saved totals that haven't run this launch. Listed only
+    /// under 累计流量, where 本周/本月 would otherwise leave out everything
+    /// that was quit before NetPulse started.
+    @Published private(set) var archivedApps: [AppUsage] = []
 
     private let nettop = NettopSampler()
     private let connections = ConnectionSampler()
@@ -100,19 +104,36 @@ final class NetworkMonitorEngine: ObservableObject {
     func togglePause(appID: String) {
         if pausedIDs.contains(appID) { pausedIDs.remove(appID) } else { pausedIDs.insert(appID) }
         UserDefaults.standard.set(Array(pausedIDs), forKey: pausedAppsDefaultsKey)
-        guard let idx = apps.firstIndex(where: { $0.id == appID }) else { return }
-        apps[idx].isPaused = pausedIDs.contains(appID)
+        if let idx = apps.firstIndex(where: { $0.id == appID }) {
+            apps[idx].isPaused = pausedIDs.contains(appID)
+        }
+        if let idx = archivedApps.firstIndex(where: { $0.id == appID }) {
+            archivedApps[idx].isPaused = pausedIDs.contains(appID)
+        }
     }
 
     // MARK: - Derived state consumed by views
 
+    /// What the app list shows: the live apps, plus under 累计流量 the
+    /// archived ones that have traffic in the selected range.
+    var listedApps: [AppUsage] {
+        guard sortMode == .total else { return apps }
+        let liveIDs = Set(apps.map(\.id))
+        let archived = archivedApps.filter {
+            !liveIDs.contains($0.id) && ($0.totalDownKB[range] ?? 0) + ($0.totalUpKB[range] ?? 0) > 0
+        }
+        return (apps + archived).sorted(by: comparator(for: sortMode, range: range))
+    }
+
     var filteredApps: [AppUsage] {
-        guard !searchText.isEmpty else { return apps }
-        return apps.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+        guard !searchText.isEmpty else { return listedApps }
+        return listedApps.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
 
     var selectedApp: AppUsage? {
-        apps.first(where: { $0.id == selectedAppID }) ?? apps.first
+        apps.first(where: { $0.id == selectedAppID })
+            ?? archivedApps.first(where: { $0.id == selectedAppID })
+            ?? apps.first
     }
 
     var topApp: AppUsage? {
@@ -245,6 +266,7 @@ final class NetworkMonitorEngine: ObservableObject {
             aggregates[identity.id] = agg
 
             history.addDelta(appID: identity.id, downKB: downDeltaKB, upKB: upDeltaKB)
+            history.rememberName(identity.name, for: identity.id)
         }
         previousSamples = samples
 
@@ -268,7 +290,9 @@ final class NetworkMonitorEngine: ObservableObject {
         apps = next.values.sorted(by: comparator(for: sortMode, range: range))
         totalDownHistory = Array((totalDownHistory + [totalDownKBps]).suffix(60))
         totalUpHistory = Array((totalUpHistory + [totalUpKBps]).suffix(60))
-        if let sel = selectedAppID, next[sel] != nil {
+        if tickCount % 5 == 1 { refreshArchivedApps() }
+        if let sel = selectedAppID,
+           next[sel] != nil || archivedApps.contains(where: { $0.id == sel }) {
             // keep selection
         } else {
             selectedAppID = apps.first?.id
@@ -292,6 +316,44 @@ final class NetworkMonitorEngine: ObservableObject {
         usage.domains = []
         usage.connectionCount = 0
         return usage
+    }
+
+    /// Rebuilds `archivedApps` from saved history. Every five ticks is
+    /// plenty: these rows' totals only change when a day rolls over.
+    private func refreshArchivedApps() {
+        let liveIDs = Set(apps.map(\.id))
+        var perRange: [TimeRange: [String: (downKB: Double, upKB: Double)]] = [:]
+        for r in TimeRange.allCases { perRange[r] = history.totalsByApp(range: r) }
+        let allTime = perRange[.all] ?? [:]
+        archivedApps = allTime.keys.filter { !liveIDs.contains($0) }.compactMap { id in
+            guard let t = allTime[id], t.downKB + t.upKB > 0 else { return nil }
+            let name = history.name(for: id) ?? Self.fallbackName(for: id)
+            var usage = AppUsage(
+                id: id, name: name, bundleID: id,
+                badge: AppPalette.badge(bundleID: id, name: name),
+                connectionCount: 0, statusLine: "未运行",
+                rateDownKBps: 0, rateUpKBps: 0,
+                totalDownKB: [:], totalUpKB: [:],
+                downHistory: [], upHistory: [], domains: [],
+                isPaused: pausedIDs.contains(id), isLive: false
+            )
+            for r in TimeRange.allCases {
+                usage.totalDownKB[r] = perRange[r]?[id]?.downKB ?? 0
+                usage.totalUpKB[r] = perRange[r]?[id]?.upKB ?? 0
+            }
+            return usage
+        }
+    }
+
+    /// A name for history recorded before names were saved: the installed
+    /// app's name for a bundle ID, or the process name behind `proc.`.
+    private static func fallbackName(for id: String) -> String {
+        if id.hasPrefix("proc.") { return String(id.dropFirst("proc.".count)) }
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+            return FileManager.default.displayName(atPath: url.path)
+                .replacingOccurrences(of: ".app", with: "")
+        }
+        return id
     }
 
     private func identify(pid: Int32, command: String) -> ProcessDirectory.Identity {
