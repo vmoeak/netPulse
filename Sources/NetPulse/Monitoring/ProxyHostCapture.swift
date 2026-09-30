@@ -37,6 +37,16 @@ final class ProxyHostCapture {
 
     static var isInstalled: Bool { FileManager.default.fileExists(atPath: plistPath) }
 
+    /// Whether the installed daemon is the one this build would install; an
+    /// older one (a changed filter, say) is offered for reinstalling.
+    var isCurrent: Bool {
+        guard let data = FileManager.default.contents(atPath: Self.plistPath),
+              let installed = try? PropertyListSerialization.propertyList(from: data, format: nil) as? NSDictionary,
+              let wanted = try? PropertyListSerialization.propertyList(from: daemonPlist(), format: nil) as? NSDictionary
+        else { return false }
+        return installed == wanted
+    }
+
     func start() {
         guard Self.isInstalled, reader == nil else { return }
         stopped = false
@@ -87,9 +97,9 @@ final class ProxyHostCapture {
     /// 05 01 00 03 (a SOCKS5 CONNECT to a domain), over IPv4 or IPv6.
     static let filter = [
         "(ip and (tcp[((tcp[12]&0xf0)>>2):4] = 0x434f4e4e or tcp[((tcp[12]&0xf0)>>2):4] = 0x05010003))",
-        "(ip6 and ip6[6] = 6 and (ip6[40+((ip6[52]&0xf0)>>2):4] = 0x434f4e4e",
+        "or (ip6 and ip6[6] = 6 and (ip6[40+((ip6[52]&0xf0)>>2):4] = 0x434f4e4e",
         "or ip6[40+((ip6[52]&0xf0)>>2):4] = 0x05010003))",
-    ].joined(separator: " or ")
+    ].joined(separator: " ")
 
     func daemonPlist() -> Data {
         let plist: [String: Any] = [

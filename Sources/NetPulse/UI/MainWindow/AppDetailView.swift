@@ -190,12 +190,19 @@ struct AppDetailView: View {
         let viaProxy = app.domains.contains { $0.kind.hasPrefix("经本机代理") || $0.kind == "经系统代理" }
         if viaProxy {
             HStack(spacing: 8) {
-                Text(engine.proxyHostCaptureInstalled
-                     ? "走系统代理的连接已按网站精确统计"
-                     : "走系统代理的流量还没分到网站")
+                Text(!engine.proxyHostCaptureInstalled ? "走系统代理的流量还没分到网站"
+                     : engine.proxyHostCaptureOutdated ? "精确统计服务需要更新"
+                     : "走系统代理的连接已按网站精确统计")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
+                if engine.proxyHostCaptureOutdated {
+                    Button("更新…") {
+                        let error = engine.installProxyHostCapture()
+                        captureError = error == "已取消" ? nil : error
+                    }
+                    .font(.system(size: 11))
+                }
                 Button(engine.proxyHostCaptureInstalled ? "关闭精确统计" : "开启精确统计…") {
                     let error = engine.proxyHostCaptureInstalled
                         ? engine.removeProxyHostCapture()

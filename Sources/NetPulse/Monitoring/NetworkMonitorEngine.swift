@@ -41,6 +41,8 @@ final class NetworkMonitorEngine: ObservableObject {
     private let hostCapture = ProxyHostCapture()
     /// Whether the loopback capture daemon is installed (see ProxyHostCapture).
     @Published private(set) var proxyHostCaptureInstalled = ProxyHostCapture.isInstalled
+    /// Installed, but by an older build whose daemon differs.
+    @Published private(set) var proxyHostCaptureOutdated = false
     /// Source port of an app's connection to a local proxy → the site it
     /// asked for, from `hostCapture`, and when that was seen.
     private var proxyHosts: [Int: (host: String, seen: Date)] = [:]
@@ -138,6 +140,7 @@ final class NetworkMonitorEngine: ObservableObject {
         nettop.start()
         hostCapture.onHosts = { [weak self] hosts in self?.ingestProxyHosts(hosts) }
         hostCapture.start()
+        proxyHostCaptureOutdated = proxyHostCaptureInstalled && !hostCapture.isCurrent
         connections.start()
         scheduleSelfTestIfRequested()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -722,12 +725,14 @@ final class NetworkMonitorEngine: ObservableObject {
     func installProxyHostCapture() -> String? {
         let error = hostCapture.install()
         proxyHostCaptureInstalled = ProxyHostCapture.isInstalled
+        proxyHostCaptureOutdated = proxyHostCaptureInstalled && !hostCapture.isCurrent
         return error
     }
 
     func removeProxyHostCapture() -> String? {
         let error = hostCapture.uninstall()
         proxyHostCaptureInstalled = ProxyHostCapture.isInstalled
+        proxyHostCaptureOutdated = proxyHostCaptureInstalled && !hostCapture.isCurrent
         return error
     }
 

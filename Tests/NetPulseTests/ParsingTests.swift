@@ -85,6 +85,24 @@ final class ParsingTests: XCTestCase {
         XCTAssertNil(TcpdumpConnectParser.host(inRequest: Array("GET / HTTP/1.1".utf8)))
     }
 
+    /// A syntax error here makes the daemon's tcpdump exit at once, on the
+    /// user's Mac only; macOS CI can compile it with tcpdump -d.
+    func testCaptureFilterCompiles() throws {
+        XCTAssertFalse(ProxyHostCapture.filter.contains("or or"))
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/tcpdump")
+        p.arguments = ["-d", "-y", "NULL", ProxyHostCapture.filter]
+        let err = Pipe()
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = err
+        guard (try? p.run()) != nil else { throw XCTSkip("no tcpdump") }
+        let message = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        p.waitUntilExit()
+        // Without capture rights tcpdump may refuse before compiling; only a
+        // filter error fails the test.
+        XCTAssertFalse(message.contains("syntax error"), message)
+    }
+
     func testLsofFieldOutput() throws {
         let text = """
         p123
