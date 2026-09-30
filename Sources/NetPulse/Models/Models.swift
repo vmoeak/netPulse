@@ -88,7 +88,7 @@ enum RateWindow: Int, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .live: return "实时"
+        case .live: return "近 10 秒"
         case .oneMinute: return "近 1 分钟"
         case .fiveMinutes: return "近 5 分钟"
         case .fifteenMinutes: return "近 15 分钟"

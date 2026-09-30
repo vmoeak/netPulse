@@ -140,8 +140,8 @@ struct AppDetailView: View {
                 Text("域名").frame(maxWidth: .infinity, alignment: .leading)
                 // Per-host rates split the app's rate by connection count;
                 // nettop reports no per-connection bytes.
-                Text("实时（估算）").frame(width: 84, alignment: .trailing)
-                    .help("按连接数平摊该 App 的实时速率得出的估算值")
+                Text("实时").frame(width: 84, alignment: .trailing)
+                    .help("按每条连接实测的字节数，每 3 秒更新")
                 // Host totals count from this launch, unlike the tiles above,
                 // which follow the chosen range.
                 Text("本次下载").frame(width: 80, alignment: .trailing)

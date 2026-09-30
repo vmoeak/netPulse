@@ -119,7 +119,8 @@ struct AppListView: View {
     private func rateHeader(down: Bool) -> String {
         switch (engine.sortMode, engine.rateWindow) {
         case (.total, _): return down ? "累计下载" : "累计上传"
-        case (.rate, .live): return down ? "下载速率" : "上传速率"
+        // Every rate window is an average, 实时 included (10 s), so the
+        // header says so; the sidebar and menu bar show the last second.
         case (.rate, _): return down ? "平均下载" : "平均上传"
         }
     }
