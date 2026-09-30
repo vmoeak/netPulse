@@ -89,19 +89,30 @@ enum ProcessDirectory {
         return Identity(id: bundleID, name: name, bundleID: bundleID, statusHint: statusHint)
     }
 
-    /// The app's name in the user's language. `localizedName` picks the
-    /// localization that matches NetPulse's own, so an app with a Chinese
-    /// name (QQ 电脑管家's helper, 「办公安全感知」) showed its English one.
+    /// The app's Chinese name when it has one, else nil (and the system's
+    /// choice is used). Chinese first on purpose rather than following the
+    /// system language order: on a Mac set to English-then-Chinese, macOS
+    /// names QQ 电脑管家's agent "umetrip", while its zh-Hans name is
+    /// 「办公安全感知」 — the one its user knows it by.
     static func preferredDisplayName(ofBundleAt url: URL) -> String? {
         guard let bundle = Bundle(url: url) else { return nil }
-        let localizations = bundle.localizations.filter { $0 != "Base" }
-        for localization in Bundle.preferredLocalizations(from: localizations, forPreferences: Locale.preferredLanguages) {
+        let chinese = bundle.localizations
+            .filter { $0.lowercased().hasPrefix("zh") }
+            .sorted { rank(ofChinese: $0) < rank(ofChinese: $1) }
+        for localization in chinese {
             guard let path = bundle.path(forResource: "InfoPlist", ofType: "strings", inDirectory: nil,
                                          forLocalization: localization),
                   let strings = NSDictionary(contentsOfFile: path) as? [String: String] else { continue }
             if let name = strings["CFBundleDisplayName"] ?? strings["CFBundleName"], !name.isEmpty { return name }
         }
         return nil
+    }
+
+    /// Simplified before Traditional.
+    private static func rank(ofChinese localization: String) -> Int {
+        let l = localization.lowercased()
+        if l.contains("hans") || l.hasSuffix("cn") || l == "zh" { return 0 }
+        return 1
     }
 
     /// Walks up from `pid` looking for an ancestor that is a real application
