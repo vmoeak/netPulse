@@ -80,7 +80,10 @@ struct AppDetailView: View {
     }
 
     private func throughputSection(_ app: AppUsage) -> some View {
-        let peak = max(app.downHistory.max() ?? 0, app.upHistory.max() ?? 0)
+        // Apps keep 15 minutes of samples for the list's windows; the chart
+        // shows the last minute.
+        let down = Array(app.downHistory.suffix(60)), up = Array(app.upHistory.suffix(60))
+        let peak = max(down.max() ?? 0, up.max() ?? 0)
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("近 60 秒吞吐")
@@ -98,9 +101,9 @@ struct AppDetailView: View {
             }
             ZStack {
                 LinearGradient(colors: [Color(hex: 0xF7F9FC), .white], startPoint: .top, endPoint: .bottom)
-                SparklineArea(values: app.downHistory).fill(Theme.accentBlue.opacity(0.13))
-                Sparkline(values: app.downHistory).stroke(Theme.accentBlue, lineWidth: 1.8)
-                Sparkline(values: app.upHistory).stroke(Theme.upOrange, lineWidth: 1.5)
+                SparklineArea(values: down).fill(Theme.accentBlue.opacity(0.13))
+                Sparkline(values: down).stroke(Theme.accentBlue, lineWidth: 1.8)
+                Sparkline(values: up).stroke(Theme.upOrange, lineWidth: 1.5)
                 if peak == 0 {
                     Text("最近 60 秒无流量").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
                 }

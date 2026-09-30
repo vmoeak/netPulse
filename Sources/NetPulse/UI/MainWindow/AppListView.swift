@@ -12,12 +12,15 @@ struct AppListView: View {
             ScrollView {
                 LazyVStack(spacing: 1) {
                     ForEach(engine.filteredApps) { app in
-                        AppRow(app: app, selected: app.id == engine.selectedAppID, sortMode: engine.sortMode, range: engine.range)
+                        AppRow(app: app, selected: app.id == engine.selectedAppID, sortMode: engine.sortMode,
+                               range: engine.range, window: engine.rateWindow)
                             .contentShape(Rectangle())
                             .onTapGesture { engine.select(appID: app.id) }
                     }
                     idleToggle
                 }
+                // Rows slide to their new places instead of jumping.
+                .animation(.easeInOut(duration: 0.35), value: engine.filteredApps.map(\.id))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
             }
@@ -51,6 +54,16 @@ struct AppListView: View {
             .padding(2)
             .background(Color.black.opacity(0.055))
             .clipShape(RoundedRectangle(cornerRadius: 7))
+
+            if engine.sortMode == .rate {
+                Picker("", selection: $engine.rateWindow) {
+                    ForEach(RateWindow.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+                .help("按这段时间内的平均速率排序")
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: 52)
@@ -89,8 +102,8 @@ struct AppListView: View {
         HStack {
             Text("应用程序").frame(maxWidth: .infinity, alignment: .leading)
             Text("趋势").frame(width: 76, alignment: .trailing)
-            Text(engine.sortMode == .rate ? "下载速率" : "累计下载").frame(width: 84, alignment: .trailing)
-            Text(engine.sortMode == .rate ? "上传速率" : "累计上传").frame(width: 84, alignment: .trailing)
+            Text(rateHeader(down: true)).frame(width: 84, alignment: .trailing)
+            Text(rateHeader(down: false)).frame(width: 84, alignment: .trailing)
         }
         .font(.system(size: 10.5, weight: .semibold))
         .foregroundStyle(Theme.textSecondary)
@@ -99,6 +112,14 @@ struct AppListView: View {
         .padding(.vertical, 7)
         .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
     }
+
+    private func rateHeader(down: Bool) -> String {
+        switch (engine.sortMode, engine.rateWindow) {
+        case (.total, _): return down ? "累计下载" : "累计上传"
+        case (.rate, .live): return down ? "下载速率" : "上传速率"
+        case (.rate, _): return down ? "平均下载" : "平均上传"
+        }
+    }
 }
 
 private struct AppRow: View {
@@ -106,13 +127,38 @@ private struct AppRow: View {
     let selected: Bool
     let sortMode: SortMode
     let range: TimeRange
+    let window: RateWindow
+
+    /// 实时 shows this second's rate; a longer window shows its average,
+    /// which is what the list is ranked by.
+    private var shownDown: Double { window == .live ? app.rateDownKBps : app.windowDownKBps }
+    private var shownUp: Double { window == .live ? app.rateUpKBps : app.windowUpKBps }
 
     var body: some View {
         HStack(spacing: 0) {
             IconBadge(badge: app.badge)
             VStack(alignment: .leading, spacing: 1) {
                 Text(app.name).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                Text(app.meta).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                if sortMode == .rate && app.windowShare > 0 {
+                    // Share of all apps' traffic over the window: bar lengths
+                    // compare at a glance where numbers have to be read.
+                    HStack(spacing: 6) {
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.black.opacity(0.06))
+                                Capsule().fill(Theme.accentBlue.opacity(0.75))
+                                    .frame(width: max(2, geo.size.width * app.windowShare))
+                            }
+                        }
+                        .frame(width: 70, height: 4)
+                        Text(app.windowShare < 0.01 ? "<1%" : "\(Int((app.windowShare * 100).rounded()))%")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .frame(height: 13)
+                } else {
+                    Text(app.meta).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                }
             }
             .padding(.leading, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -126,10 +172,10 @@ private struct AppRow: View {
             .frame(width: 68, height: 24)
             .frame(width: 76, alignment: .trailing)
 
-            Text(sortMode == .rate ? Format.rate(app.rateDownKBps) : Format.size(app.totalDownKB[range] ?? 0))
+            Text(sortMode == .rate ? Format.rate(shownDown) : Format.size(app.totalDownKB[range] ?? 0))
                 .frame(width: 84, alignment: .trailing)
                 .foregroundStyle(Theme.accentBlue)
-            Text(sortMode == .rate ? Format.rate(app.rateUpKBps) : Format.size(app.totalUpKB[range] ?? 0))
+            Text(sortMode == .rate ? Format.rate(shownUp) : Format.size(app.totalUpKB[range] ?? 0))
                 .frame(width: 84, alignment: .trailing)
                 .foregroundStyle(Theme.upOrangeText)
         }

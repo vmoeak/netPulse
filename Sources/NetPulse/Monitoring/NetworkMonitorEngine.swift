@@ -12,6 +12,7 @@ final class NetworkMonitorEngine: ObservableObject {
     @Published private(set) var apps: [AppUsage] = []
     @Published var selectedAppID: String?
     @Published var sortMode: SortMode = .rate { didSet { resort() } }
+    @Published var rateWindow: RateWindow = .live { didSet { resort() } }
     @Published var range: TimeRange = .today { didSet { resort() } }
     @Published var section: SidebarSection = .apps
     @Published var popoverOpen: Bool = true
@@ -424,7 +425,7 @@ final class NetworkMonitorEngine: ObservableObject {
                                           statusHint: identity.statusHint))
         }
 
-        apps = next.values.sorted(by: comparator(for: sortMode, range: range))
+        apps = ordered(withWindowRates(Array(next.values)))
         totalDownHistory = Array((totalDownHistory + [totalDownKBps]).suffix(60))
         totalUpHistory = Array((totalUpHistory + [totalUpKBps]).suffix(60))
         if tickCount % 5 == 1 { refreshArchivedApps() }
@@ -457,8 +458,8 @@ final class NetworkMonitorEngine: ObservableObject {
         usage.statusLine = paused ? "已暂停统计" : "已退出"
         usage.rateDownKBps = 0
         usage.rateUpKBps = 0
-        usage.downHistory = Array((usage.downHistory + [0]).suffix(60))
-        usage.upHistory = Array((usage.upHistory + [0]).suffix(60))
+        usage.downHistory = Array((usage.downHistory + [0]).suffix(Self.historyLength))
+        usage.upHistory = Array((usage.upHistory + [0]).suffix(Self.historyLength))
         usage.domains = []
         usage.connectionCount = 0
         return usage
@@ -584,8 +585,8 @@ final class NetworkMonitorEngine: ObservableObject {
         usage.isPaused = false
         usage.rateDownKBps = agg.downKBps
         usage.rateUpKBps = agg.upKBps
-        usage.downHistory = Array((usage.downHistory + [agg.downKBps]).suffix(60))
-        usage.upHistory = Array((usage.upHistory + [agg.upKBps]).suffix(60))
+        usage.downHistory = Array((usage.downHistory + [agg.downKBps]).suffix(Self.historyLength))
+        usage.upHistory = Array((usage.upHistory + [agg.upKBps]).suffix(Self.historyLength))
 
         var hostConnCounts: [String: Int] = [:]
         var loopbackConnCounts: [String: Int] = [:]
@@ -742,8 +743,55 @@ final class NetworkMonitorEngine: ObservableObject {
         return "本机 · \(peer.name)"
     }
 
+    /// Per-second samples kept per app: enough for the longest RateWindow.
+    static let historyLength = RateWindow.fifteenMinutes.seconds
+
     private func resort() {
-        apps = apps.sorted(by: comparator(for: sortMode, range: range))
+        apps = ordered(withWindowRates(apps), force: true)
+    }
+
+    /// Fills in each app's average over `rateWindow` and its share of all
+    /// apps' traffic in it. A proxy is left out of the shares: its bytes are
+    /// the other apps' again.
+    private func withWindowRates(_ list: [AppUsage]) -> [AppUsage] {
+        // Right after launch a window isn't full yet; average over what
+        // there is, the same for every app.
+        let span = max(1, min(rateWindow.seconds, tickCount))
+        var result = list.map { app -> AppUsage in
+            var app = app
+            app.windowDownKBps = app.downHistory.suffix(span).reduce(0, +) / Double(span)
+            app.windowUpKBps = app.upHistory.suffix(span).reduce(0, +) / Double(span)
+            return app
+        }
+        let total = result.filter { !$0.isProxy }.reduce(0) { $0 + $1.windowDownKBps + $1.windowUpKBps }
+        for i in result.indices {
+            let own = result[i].windowDownKBps + result[i].windowUpKBps
+            result[i].windowShare = result[i].isProxy || total == 0 ? 0 : own / total
+        }
+        return result
+    }
+
+    /// Apps in list order. Under 实时速率 the order is only re-ranked every
+    /// few seconds; in between, rows keep their places and only their
+    /// numbers change, so the list can be read instead of chased.
+    private var listOrder: [String] = []
+    private static let reorderInterval = 3
+
+    private func ordered(_ list: [AppUsage], force: Bool = false) -> [AppUsage] {
+        let ranked = list.sorted(by: comparator(for: sortMode, range: range))
+        if force || sortMode == .total || listOrder.isEmpty || tickCount % Self.reorderInterval == 0 {
+            listOrder = ranked.map(\.id)
+            return ranked
+        }
+        let place = Dictionary(listOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        let kept = ranked.enumerated().sorted { a, b in
+            // New rows go below the ones already placed, in ranked order.
+            let pa = place[a.element.id] ?? Int.max, pb = place[b.element.id] ?? Int.max
+            if a.element.isProxy != b.element.isProxy { return b.element.isProxy }
+            return (pa, a.offset) < (pb, b.offset)
+        }.map(\.element)
+        listOrder = kept.map(\.id)
+        return kept
     }
 
     private func comparator(for sortMode: SortMode, range: TimeRange) -> (AppUsage, AppUsage) -> Bool {
@@ -752,6 +800,8 @@ final class NetworkMonitorEngine: ObservableObject {
             // it read as the biggest user.
             if lhs.isProxy != rhs.isProxy { return rhs.isProxy }
             if sortMode == .rate {
+                let l = lhs.windowDownKBps + lhs.windowUpKBps, r = rhs.windowDownKBps + rhs.windowUpKBps
+                if l != r { return l > r }
                 return (lhs.rateDownKBps + lhs.rateUpKBps) > (rhs.rateDownKBps + rhs.rateUpKBps)
             }
             let l = (lhs.totalDownKB[range] ?? 0) + (lhs.totalUpKB[range] ?? 0)

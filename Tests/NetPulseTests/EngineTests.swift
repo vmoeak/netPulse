@@ -265,4 +265,35 @@ final class EngineTests: XCTestCase {
         XCTAssertFalse(engine.domainRollups.contains { $0.host == "chrome" || $0.host == "code" })
         XCTAssertEqual(app("proc.chrome")?.domains.first?.host, "localhost:1082")
     }
+
+    /// A one-second burst doesn't reorder the list; the window average does,
+    /// and only on a re-rank tick.
+    func testRateRankingUsesTheWindowAndHoldsOrderBetweenReranks() throws {
+        let steady = try livePID(), bursty = try livePID()
+        var steadyKB = 0.0, burstyKB = 0.0
+        feed(steady, "steady", downKB: 0)
+        feed(bursty, "bursty", downKB: 0)
+        engine.tick()                                   // tick 1: baseline
+        for _ in 0..<4 {                                // ticks 2-5: steady 100 KB/s
+            steadyKB += 100
+            feed(steady, "steady", downKB: steadyKB)
+            engine.tick()
+        }
+        XCTAssertEqual(engine.apps.first?.id, "proc.steady")
+
+        burstyKB += 300                                 // tick 6: one 300 KB burst
+        steadyKB += 100
+        feed(bursty, "bursty", downKB: burstyKB)
+        feed(steady, "steady", downKB: steadyKB)
+        engine.tick()
+        XCTAssertEqual(engine.apps.first?.id, "proc.steady",
+                       "a single-second burst doesn't outrank 5 seconds of steady traffic")
+        let steadyRow = try XCTUnwrap(app("proc.steady"))
+        XCTAssertEqual(steadyRow.windowDownKBps, 100, accuracy: 0.001, "500 KB over the last 5 s")
+        XCTAssertEqual(steadyRow.windowShare, 500.0 / 800.0, accuracy: 0.001)
+
+        engine.rateWindow = .oneMinute
+        XCTAssertEqual(app("proc.steady")?.windowDownKBps ?? 0, 500.0 / 6.0, accuracy: 0.001,
+                       "averaged over the 6 ticks seen so far")
+    }
 }
