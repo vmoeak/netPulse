@@ -80,12 +80,20 @@ final class NettopSampler: NettopSource {
         lock.unlock()
 
         let p = Process()
-        // Resolved via PATH rather than a hardcoded /usr/bin or /usr/sbin —
-        // both are plausible for nettop and this avoids guessing wrong.
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        // -P process mode, -x non-interactive log output (safe to pipe),
-        // -l 0 sample forever, -s 1 once per second, -J restrict columns.
-        p.arguments = ["nettop", "-P", "-x", "-l", "0", "-s", "1", "-J", "bytes_in,bytes_out"]
+        // nettop writes through stdio, which fully buffers into a pipe: on a
+        // quiet Mac a whole buffer takes tens of seconds to fill, so rows
+        // arrived in rare bursts and short-lived traffic (a 10 s download)
+        // was never seen at all — CI's smoke test caught this. Running it
+        // under `script` gives it a pseudo-terminal, where stdio flushes
+        // every line. `script` copies the terminal's output to our pipe
+        // unbuffered, and closing it hangs up nettop.
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/script")
+        // nettop is resolved via PATH rather than a hardcoded /usr/bin or
+        // /usr/sbin — both are plausible and this avoids guessing wrong.
+        // -P process mode, -x non-interactive log output, -l 0 sample
+        // forever, -s 1 once per second, -J restrict columns.
+        p.arguments = ["-q", "/dev/null",
+                       "/usr/bin/env", "nettop", "-P", "-x", "-l", "0", "-s", "1", "-J", "bytes_in,bytes_out"]
 
         let out = Pipe()
         let err = Pipe()
@@ -113,7 +121,10 @@ final class NettopSampler: NettopSource {
         p.terminationHandler = { [weak self] proc in
             guard let self else { return }
             self.lock.lock()
-            let stderrText = String(data: self.stderrBuffer, encoding: .utf8) ?? ""
+            // Under the pseudo-terminal nettop's own errors arrive on stdout,
+            // so its first lines stand in when `script` itself said nothing.
+            var stderrText = String(data: self.stderrBuffer, encoding: .utf8) ?? ""
+            if stderrText.isEmpty { stderrText = self.firstLines.joined(separator: " ⏎ ") }
             self.didReportHardFailure = true
             let wasProducingRows = self.parsedAnyRow
             self.lock.unlock()
@@ -215,7 +226,8 @@ final class NettopSampler: NettopSource {
     }
 
     private func parse(line: String) {
-        let raw = line.trimmingCharacters(in: .whitespaces)
+        // A terminal ends lines with \r\n.
+        let raw = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return }
 
         lock.lock()

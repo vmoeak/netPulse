@@ -41,7 +41,7 @@ jobs:
           APP=$!
           # The same nettop invocation the app uses, logged raw, so a failed
           # check shows what nettop actually printed for curl.
-          perl -e 'alarm 40; exec @ARGV' nettop -P -x -l 0 -s 1 -J bytes_in,bytes_out > nettop.log 2>&1 &
+          perl -e 'alarm 40; exec @ARGV' script -q /dev/null nettop -P -x -l 0 -s 1 -J bytes_in,bytes_out > nettop.log 2>&1 &
           sleep 5
           curl -sSL --limit-rate 300k --max-time 10 -o /dev/null \
             https://download.swift.org/swift-5.10-release/xcode/swift-5.10-RELEASE/swift-5.10-RELEASE-osx.pkg || true
