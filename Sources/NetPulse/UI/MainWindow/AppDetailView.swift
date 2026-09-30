@@ -178,16 +178,29 @@ struct AppDetailView: View {
     /// The proxy's log names sites but not bytes, so these rows only say
     /// where the app went and how often.
     private func proxyVisitsHeader(count: Int, isProxy: Bool) -> some View {
-        HStack {
-            Text(isProxy ? "认不出 App 的代理连接 · \(count) 个网站" : "经代理访问的网站 · \(count) 个")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary)
-            Spacer()
-            Text("来自 Shadowrocket 日志，只有次数没有流量")
-                .font(.system(size: 10.5))
-                .foregroundStyle(Theme.textTertiary)
+        VStack(spacing: 6) {
+            HStack {
+                Text(isProxy ? "认不出 App 的代理连接 · \(count) 个网站" : "经代理访问的网站 · \(count) 个")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Text("来自 Shadowrocket 日志，只有次数没有流量")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            // Its own columns: the table header pinned above belongs to the
+            // host rows and doesn't describe these.
+            HStack {
+                Text("网站").frame(maxWidth: .infinity, alignment: .leading)
+                Text("走向").frame(width: 52, alignment: .trailing)
+                Text("次数").frame(width: 60, alignment: .trailing)
+                Text("最后访问").frame(width: 72, alignment: .trailing)
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(Theme.textTertiary)
         }
-        .padding(.horizontal, 10).padding(.top, 14).padding(.bottom, 6)
+        .padding(.horizontal, 10).padding(.top, 16).padding(.bottom, 6)
+        .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
     }
 
     private func exportReport(_ app: AppUsage) {

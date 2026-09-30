@@ -16,6 +16,8 @@ enum Format {
     static func size(_ kb: Double) -> String {
         if kb >= 1_048_576 { return String(format: "%.2f GB", kb / 1_048_576) }
         if kb >= 1024 { return String(format: "%.1f MB", kb / 1024) }
+        // A few hundred bytes rounded to "0 KB" read as no traffic at all.
+        if kb > 0 && kb < 0.5 { return "<1 KB" }
         return "\(Int(kb.rounded())) KB"
     }
 }
