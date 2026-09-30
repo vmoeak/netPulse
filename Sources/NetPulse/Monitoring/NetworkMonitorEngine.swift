@@ -773,7 +773,19 @@ final class NetworkMonitorEngine: ObservableObject {
             let identity = identify(pid: pid, command: sample.command)
             guard !pausedIDs.contains(identity.id) else { continue }
             var flow = byApp[identity.id] ?? AppFlows()
-            splitByConnection(sample, previous: elapsed == nil ? nil : previousFlows[pid],
+            // A process first seen after the first sample started since, or
+            // opened its first socket since: its connections' counters all
+            // grew since then (they start at zero). What its process counter
+            // held before that can't be placed, so none of it goes to 已关闭.
+            var previous = previousFlows[pid]
+            if elapsed != nil, previous == nil {
+                let connIn = sample.connections.values.reduce(0) { $0 + $1.bytesIn } / 1024
+                let connOut = sample.connections.values.reduce(0) { $0 + $1.bytesOut } / 1024
+                previous = NettopSampler.Sample(pid: pid, command: sample.command,
+                                                bytesInCumKB: max(0, sample.bytesInCumKB - connIn),
+                                                bytesOutCumKB: max(0, sample.bytesOutCumKB - connOut))
+            }
+            splitByConnection(sample, previous: elapsed == nil ? nil : previous,
                               appID: identity.id, into: &flow)
             byApp[identity.id] = flow
             for conn in sample.connections.values where conn.remoteHost != "*" && !conn.isLoopback {

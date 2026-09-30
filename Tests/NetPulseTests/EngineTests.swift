@@ -121,6 +121,21 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(site.totalDownKB, 30, accuracy: 0.001)
     }
 
+    func testAProcessThatStartsBetweenSamplesIsCountedFromZero() throws {
+        let first = try livePID(), later = try livePID()
+        let start = Date()
+        engine.ingestFlows(flows(first, "alpha", downKB: 0, connections: [:]), at: start)
+        // Already 1 MB in by the time the next sample sees it.
+        var next = flows(later, "beta", downKB: 1024, connections: ["a": ("192.0.2.20", 1024)])
+        next[first] = flows(first, "alpha", downKB: 0, connections: [:])[first]
+        engine.ingestFlows(next, at: start.addingTimeInterval(3))
+        feed(later, "beta", downKB: 0)
+        engine.tick()
+        let host = try XCTUnwrap(app("proc.beta")?.domains.first { $0.host == "192.0.2.20" })
+        XCTAssertEqual(host.totalDownKB, 1024, accuracy: 0.001)
+        XCTAssertNil(app("proc.beta")?.domains.first { $0.host == "已关闭的连接" })
+    }
+
     func testAConnectionSampledWithoutCountersIsNotCountedTwice() throws {
         let pid = try livePID()
         let start = Date()
