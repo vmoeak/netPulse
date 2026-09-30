@@ -257,11 +257,12 @@ final class EngineTests: XCTestCase {
 
         let tunnel = try XCTUnwrap(app("proc.tunnel"))
         XCTAssertTrue(tunnel.isProxy)
-        XCTAssertEqual(Set(tunnel.domains.map(\.host)), ["192.0.2.1", "为 chrome 转发", "为 code 转发"])
-        XCTAssertEqual(tunnel.domains.first { $0.host == "为 chrome 转发" }?.connectionCount, 2)
+        XCTAssertEqual(Set(tunnel.domains.map(\.host)), ["192.0.2.1", "chrome", "code"])
+        XCTAssertEqual(tunnel.domains.first { $0.host == "chrome" }?.connectionCount, 2)
+        XCTAssertEqual(engine.apps.last?.id, "proc.tunnel", "the proxy sorts below the apps it forwards for")
         XCTAssertEqual(engine.totalDownKBps, 150, accuracy: 0.001, "the proxy's forwarded bytes are not counted twice")
         XCTAssertEqual(engine.topApp?.id, "proc.chrome")
-        XCTAssertFalse(engine.domainRollups.contains { $0.host.hasPrefix("为 ") })
+        XCTAssertFalse(engine.domainRollups.contains { $0.host == "chrome" || $0.host == "code" })
         XCTAssertEqual(app("proc.chrome")?.domains.first?.host, "localhost:1082")
     }
 }

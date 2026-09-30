@@ -717,7 +717,9 @@ final class NetworkMonitorEngine: ObservableObject {
     private func describe(endpoint: String) -> (host: String, kind: String) {
         if endpoint.hasPrefix(Self.forwardPrefix) {
             let appID = String(endpoint.dropFirst(Self.forwardPrefix.count))
-            return ("为 \(forwardedAppNames[appID] ?? appID) 转发", "本机代理转发")
+            // The app's name alone: "为 Google Chrome 转发" got its name
+            // cut in the middle in the host column.
+            return (forwardedAppNames[appID] ?? appID, "代理为这个 App 转发的流量")
         }
         if endpoint.hasPrefix(Self.loopbackPrefix),
            let port = Int(endpoint.dropFirst(Self.loopbackPrefix.count)) {
@@ -746,6 +748,9 @@ final class NetworkMonitorEngine: ObservableObject {
 
     private func comparator(for sortMode: SortMode, range: TimeRange) -> (AppUsage, AppUsage) -> Bool {
         { lhs, rhs in
+            // A proxy's traffic is the other apps' traffic again; at the top
+            // it read as the biggest user.
+            if lhs.isProxy != rhs.isProxy { return rhs.isProxy }
             if sortMode == .rate {
                 return (lhs.rateDownKBps + lhs.rateUpKBps) > (rhs.rateDownKBps + rhs.rateUpKBps)
             }
