@@ -1,6 +1,7 @@
 import AppKit
 
 private let pausedAppsDefaultsKey = "pausedAppIDs"
+private let showIdleAppsDefaultsKey = "showIdleApps"
 
 /// Orchestrates the live monitors into the `apps`/`selectedApp`/etc. state
 /// the UI binds to — the real-data analogue of `renderVals()` in the
@@ -15,6 +16,11 @@ final class NetworkMonitorEngine: ObservableObject {
     @Published var section: SidebarSection = .apps
     @Published var popoverOpen: Bool = true
     @Published var searchText: String = ""
+    /// Processes that hold a socket but have never moved a byte (mostly
+    /// system daemons) crowd the list; they are hidden unless asked for.
+    @Published var showIdleApps: Bool = false {
+        didSet { defaults.set(showIdleApps, forKey: showIdleAppsDefaultsKey) }
+    }
     @Published private(set) var status: MonitoringStatus = .starting
     /// Machine-wide rates over the last 60 ticks, oldest first — what the
     /// menu bar chip draws and what the sidebar meters are scaled against.
@@ -76,6 +82,7 @@ final class NetworkMonitorEngine: ObservableObject {
         self.history = history
         self.defaults = defaults
         pausedIDs = Set(defaults.stringArray(forKey: pausedAppsDefaultsKey) ?? [])
+        showIdleApps = defaults.bool(forKey: showIdleAppsDefaultsKey)
     }
 
     /// Idempotent — safe to call from multiple view lifecycle hooks (the
@@ -174,7 +181,13 @@ final class NetworkMonitorEngine: ObservableObject {
         history.saveIfDirty()
     }
 
-    func select(appID: String) { selectedAppID = appID }
+    func select(appID: String) {
+        selectedAppID = appID
+        userPickedSelection = true
+    }
+    /// Until someone picks a row, an idle selection moves to the busiest
+    /// app: the first ticks after launch have no rates yet to choose by.
+    private var userPickedSelection = false
     func togglePopover() { popoverOpen.toggle() }
     func openMainWindow() { popoverOpen = false }
 
@@ -194,12 +207,25 @@ final class NetworkMonitorEngine: ObservableObject {
     /// What the app list shows: the live apps, plus under 累计流量 the
     /// archived ones that have traffic in the selected range.
     var listedApps: [AppUsage] {
-        guard sortMode == .total else { return apps }
+        let shown = showIdleApps ? apps : apps.filter { !isIdle($0) }
+        guard sortMode == .total else { return shown }
         let liveIDs = Set(apps.map(\.id))
         let archived = archivedApps.filter {
             !liveIDs.contains($0.id) && ($0.totalDownKB[range] ?? 0) + ($0.totalUpKB[range] ?? 0) > 0
         }
-        return (apps + archived).sorted(by: comparator(for: sortMode, range: range))
+        return (shown + archived).sorted(by: comparator(for: sortMode, range: range))
+    }
+
+    /// How many rows `listedApps` leaves out because they never moved a byte.
+    var hiddenIdleCount: Int {
+        showIdleApps ? 0 : apps.filter(isIdle).count
+    }
+
+    /// Never moved a byte, in this launch or any saved day. A paused app
+    /// stays listed: its row is where it gets resumed.
+    func isIdle(_ app: AppUsage) -> Bool {
+        !app.isPaused && app.rateDownKBps + app.rateUpKBps == 0
+            && (app.totalDownKB[.all] ?? 0) + (app.totalUpKB[.all] ?? 0) == 0
     }
 
     var filteredApps: [AppUsage] {
@@ -381,13 +407,19 @@ final class NetworkMonitorEngine: ObservableObject {
         totalDownHistory = Array((totalDownHistory + [totalDownKBps]).suffix(60))
         totalUpHistory = Array((totalUpHistory + [totalUpKBps]).suffix(60))
         if tickCount % 5 == 1 { refreshArchivedApps() }
+        let busiest = apps.max { $0.rateDownKBps + $0.rateUpKBps < $1.rateDownKBps + $1.rateUpKBps }
+            .flatMap { $0.rateDownKBps + $0.rateUpKBps > 0 ? $0 : nil }
         if let sel = selectedAppID,
            next[sel] != nil || archivedApps.contains(where: { $0.id == sel }) {
-            // keep selection
+            // Moves off an idle row only, so a busy selection doesn't hop
+            // between apps every second.
+            let selIdle = next[sel].map { $0.rateDownKBps + $0.rateUpKBps == 0 } ?? true
+            if !userPickedSelection, selIdle, let busiest { selectedAppID = busiest.id }
         } else {
             // Open on what is moving right now, not on whichever idle row
             // the current sort puts first.
-            selectedAppID = (apps.first(where: { $0.rateDownKBps + $0.rateUpKBps > 0 }) ?? apps.first)?.id
+            selectedAppID = (busiest ?? apps.first)?.id
+            userPickedSelection = false
         }
     }
 

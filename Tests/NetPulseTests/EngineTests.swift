@@ -215,4 +215,20 @@ final class EngineTests: XCTestCase {
         engine.tick()
         XCTAssertEqual(engine.totalDownPct, 0.5, accuracy: 0.001)
     }
+
+    func testAppsThatNeverMovedAByteAreHiddenUntilAskedFor() throws {
+        let idle = try livePID(), busy = try livePID()
+        feed(idle, "idled", downKB: 0)
+        feed(busy, "busy", downKB: 0)
+        engine.tick()
+        feed(busy, "busy", downKB: 100)
+        engine.tick()
+
+        XCTAssertEqual(engine.listedApps.map(\.id), ["proc.busy"])
+        XCTAssertEqual(engine.hiddenIdleCount, 1)
+        XCTAssertEqual(engine.selectedAppID, "proc.busy", "opens on the app that is moving traffic")
+        engine.showIdleApps = true
+        XCTAssertEqual(Set(engine.listedApps.map(\.id)), ["proc.busy", "proc.idled"])
+        XCTAssertEqual(engine.hiddenIdleCount, 0)
+    }
 }
