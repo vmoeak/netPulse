@@ -102,6 +102,25 @@ final class EngineTests: XCTestCase {
         XCTAssertFalse(engine.domainRollups.contains { $0.host == "已关闭的连接" })
     }
 
+    func testCapturedProxyRequestsNameTheSiteOfALoopbackConnection() throws {
+        let pid = try livePID()
+        func sample(_ kb: Double) -> [Int32: NettopSampler.Sample] {
+            var s = NettopSampler.Sample(pid: pid, command: "alpha", bytesInCumKB: kb, bytesOutCumKB: 0)
+            s.connections["tcp4 127.0.0.1:56826<->127.0.0.1:1082"] = NettopSampler.Connection(
+                remoteHost: "127.0.0.1", remotePort: 1082, bytesIn: kb * 1024, bytesOut: 0, localPort: 56826)
+            return [pid: s]
+        }
+        let start = Date()
+        engine.ingestProxyHosts([56826: "github.com"], at: start)
+        engine.ingestFlows(sample(10), at: start)
+        engine.ingestFlows(sample(40), at: start.addingTimeInterval(3))
+        feed(pid, "alpha", downKB: 0)
+        engine.tick()
+        let site = try XCTUnwrap(app("proc.alpha")?.domains.first { $0.host == "github.com" })
+        XCTAssertEqual(site.kind, "经系统代理")
+        XCTAssertEqual(site.totalDownKB, 30, accuracy: 0.001)
+    }
+
     func testHostsDisappearWhenProcessClosesItsSockets() throws {
         let pid = try livePID()
         feed(pid, "alpha", downKB: 0)

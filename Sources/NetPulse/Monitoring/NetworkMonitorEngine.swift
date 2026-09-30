@@ -38,6 +38,12 @@ final class NetworkMonitorEngine: ObservableObject {
     private let connections: ConnectionSampler
     private let dns = ReverseDNSResolver()
     private let proxyLog: ProxyLogReader
+    private let hostCapture = ProxyHostCapture()
+    /// Whether the loopback capture daemon is installed (see ProxyHostCapture).
+    @Published private(set) var proxyHostCaptureInstalled = ProxyHostCapture.isInstalled
+    /// Source port of an app's connection to a local proxy → the site it
+    /// asked for, from `hostCapture`, and when that was seen.
+    private var proxyHosts: [Int: (host: String, seen: Date)] = [:]
     private let proxyLogQueue = DispatchQueue(label: "NetPulse.proxyLog", qos: .utility)
     private var proxyLogReadInFlight = false
     private let history: HistoryStore
@@ -130,6 +136,8 @@ final class NetworkMonitorEngine: ObservableObject {
             }
         }
         nettop.start()
+        hostCapture.onHosts = { [weak self] hosts in self?.ingestProxyHosts(hosts) }
+        hostCapture.start()
         connections.start()
         scheduleSelfTestIfRequested()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -204,6 +212,7 @@ final class NetworkMonitorEngine: ObservableObject {
         tickTimer = nil
         nettop.stop()
         connections.stop()
+        hostCapture.stop()
         history.saveIfDirty()
     }
 
@@ -704,6 +713,24 @@ final class NetworkMonitorEngine: ObservableObject {
         var pids: [Int32] = []
     }
 
+    func ingestProxyHosts(_ hosts: [Int: String], at date: Date = Date()) {
+        for (port, host) in hosts { proxyHosts[port] = (host, date) }
+    }
+
+    /// Asks for an administrator password and installs the capture daemon.
+    /// Returns an error message, or nil on success.
+    func installProxyHostCapture() -> String? {
+        let error = hostCapture.install()
+        proxyHostCaptureInstalled = ProxyHostCapture.isInstalled
+        return error
+    }
+
+    func removeProxyHostCapture() -> String? {
+        let error = hostCapture.uninstall()
+        proxyHostCaptureInstalled = ProxyHostCapture.isInstalled
+        return error
+    }
+
     private struct AppFlows {
         var kb: [String: HostTotals] = [:]
         var conns: [String: Int] = [:]
@@ -746,6 +773,13 @@ final class NetworkMonitorEngine: ObservableObject {
         flowConns = byApp.mapValues(\.conns)
         previousFlows = flows
         previousFlowsAt = date
+        // A port's site is kept while its connection lives; a capture that
+        // lands before nettop first lists the connection gets a minute.
+        var openPorts: Set<Int> = []
+        for sample in flows.values {
+            for conn in sample.connections.values { if let port = conn.localPort { openPorts.insert(port) } }
+        }
+        proxyHosts = proxyHosts.filter { openPorts.contains($0.key) || date.timeIntervalSince($0.value.seen) < 60 }
         if flows.values.contains(where: { !$0.connections.isEmpty }) { hasFlowData = true }
         if !remoteIPs.isEmpty { resolveHosts(remoteIPs) }
     }
@@ -773,6 +807,9 @@ final class NetworkMonitorEngine: ObservableObject {
             let endpoint: String
             if conn.remoteHost == "*" {
                 endpoint = Self.unconnectedEndpoint
+            } else if conn.isLoopback, let port = conn.localPort, let site = proxyHosts[port] {
+                // The site this connection asked the local proxy for.
+                endpoint = Self.sitePrefix + site.host
             } else if conn.isLoopback {
                 endpoint = loopbackEndpoint(port: conn.remotePort ?? 0, appID: appID)
             } else {
@@ -905,6 +942,7 @@ final class NetworkMonitorEngine: ObservableObject {
 
     private static let loopbackPrefix = "localhost:"
     private static let forwardPrefix = "forward:"
+    private static let sitePrefix = "site:"
 
     /// Endpoint key for a loopback connection to `port`. Seen from a local
     /// proxy, the far end is some app's ephemeral port — one row per port,
@@ -944,6 +982,9 @@ final class NetworkMonitorEngine: ObservableObject {
 
     /// Display name and kind for an endpoint key from `hostTotals`.
     private func describe(endpoint: String) -> (host: String, kind: String) {
+        if endpoint.hasPrefix(Self.sitePrefix) {
+            return (String(endpoint.dropFirst(Self.sitePrefix.count)), "经系统代理")
+        }
         if endpoint == Self.closedEndpoint { return ("已关闭的连接", "连接已结束，无法再分到网站") }
         if endpoint == Self.unconnectedEndpoint { return ("无固定对端", "广播 / 本地发现") }
         if endpoint.hasPrefix(Self.forwardPrefix) {

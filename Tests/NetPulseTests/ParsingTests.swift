@@ -28,7 +28,7 @@ final class ParsingTests: XCTestCase {
         XCTAssertEqual(NettopSampler.parseLine("   tcp4 192.168.1.5:49753<->203.0.113.7:443   19025   20590"),
                        .connection(key: "tcp4 192.168.1.5:49753<->203.0.113.7:443",
                                    NettopSampler.Connection(remoteHost: "203.0.113.7", remotePort: 443,
-                                                            bytesIn: 19025, bytesOut: 20590)))
+                                                            bytesIn: 19025, bytesOut: 20590, localPort: 49753)))
         guard case .connection(_, let v6) = NettopSampler.parseLine("   tcp6 ::1.50568<->::1.1082   10   20") else {
             return XCTFail("IPv6 row not recognized")
         }
@@ -57,6 +57,32 @@ final class ParsingTests: XCTestCase {
         XCTAssertEqual(samples[1060]?.connections.count, 2)
         XCTAssertEqual(samples[1060]?.bytesInCumKB ?? 0, 300.0 / 1024, accuracy: 0.0001)
         XCTAssertEqual(samples[77]?.connections.values.first?.remoteHost, "*")
+    }
+
+    func testTcpdumpConnectRequestsNameTheSourcePortsSite() {
+        var parser = TcpdumpConnectParser()
+        // IPv4, 127.0.0.1:56826 -> 127.0.0.1:1082, 20-byte TCP header,
+        // payload "CONNECT github.com:443 HTTP/1.1\r\n".
+        let lines = [
+            "17:01:02.123456 IP 127.0.0.1.56826 > 127.0.0.1.1082: Flags [P.], seq 1:34, length 33",
+            "\t0x0000:  4500 0049 0000 4000 4006 0000 7f00 0001",
+            "\t0x0010:  7f00 0001 ddfa 043a 0000 0001 0000 0001",
+            "\t0x0020:  5018 ffff 0000 0000 434f 4e4e 4543 5420",
+            "\t0x0030:  6769 7468 7562 2e63 6f6d 3a34 3433 2048",
+            "\t0x0040:  5454 502f 312e 310d 0a",
+        ]
+        var hits: [(Int, String)] = []
+        for line in lines {
+            if let hit = parser.feed(line: line) { hits.append((hit.sourcePort, hit.host)) }
+        }
+        XCTAssertEqual(hits.count, 1)
+        XCTAssertEqual(hits.first?.0, 56826)
+        XCTAssertEqual(hits.first?.1, "github.com")
+
+        // SOCKS5 CONNECT to a domain: 05 01 00 03, length, name, port.
+        let socks: [UInt8] = [5, 1, 0, 3, 11] + Array("example.org".utf8) + [1, 187]
+        XCTAssertEqual(TcpdumpConnectParser.host(inRequest: socks), "example.org")
+        XCTAssertNil(TcpdumpConnectParser.host(inRequest: Array("GET / HTTP/1.1".utf8)))
     }
 
     func testLsofFieldOutput() throws {

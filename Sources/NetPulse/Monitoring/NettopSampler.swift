@@ -54,6 +54,9 @@ final class NettopSampler: NettopSource {
         let remotePort: Int?
         let bytesIn: Double
         let bytesOut: Double
+        /// This end's port: for an app talking to a local proxy, what names
+        /// the connection in `ProxyHostCapture`.
+        var localPort: Int? = nil
 
         var isLoopback: Bool {
             remoteHost == "::1" || remoteHost == "localhost" || remoteHost.hasPrefix("127.")
@@ -216,6 +219,7 @@ final class NettopSampler: NettopSource {
         if tokens.count >= 2, tokens[0].hasPrefix("tcp") || tokens[0].hasPrefix("udp"),
            let arrow = tokens[1].range(of: "<->") {
             let remote = splitEndpoint(String(tokens[1][arrow.upperBound...]))
+            let local = splitEndpoint(String(tokens[1][..<arrow.lowerBound]))
             var bytesIn = 0.0, bytesOut = 0.0
             if tokens.count >= 4, let i = Double(tokens[tokens.count - 2]), let o = Double(tokens[tokens.count - 1]) {
                 bytesIn = i
@@ -223,7 +227,7 @@ final class NettopSampler: NettopSource {
             }
             return .connection(key: tokens[0] + " " + tokens[1],
                                Connection(remoteHost: remote.host, remotePort: remote.port,
-                                          bytesIn: bytesIn, bytesOut: bytesOut))
+                                          bytesIn: bytesIn, bytesOut: bytesOut, localPort: local.port))
         }
         if let row = parseRow(raw) { return .process(row) }
         return .other
