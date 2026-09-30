@@ -58,13 +58,16 @@ final class NetworkMonitorEngine: ObservableObject {
 
     private var tickTimer: Timer?
     private var hasStarted = false
+    private let identifyProcess: (Int32, String) -> ProcessDirectory.Identity
 
     /// Parameters exist for tests, which drive `tick()` and
     /// `ingestConnections(_:)` directly with canned data.
     init(nettop: NettopSource = NettopSampler(),
          connections: ConnectionSampler = ConnectionSampler(),
          history: HistoryStore = HistoryStore(),
-         defaults: UserDefaults = .standard) {
+         defaults: UserDefaults = .standard,
+         identify: @escaping (Int32, String) -> ProcessDirectory.Identity = ProcessDirectory.identify) {
+        self.identifyProcess = identify
         self.nettop = nettop
         self.connections = connections
         self.history = history
@@ -329,7 +332,9 @@ final class NetworkMonitorEngine: ObservableObject {
             aggregates[identity.id] = agg
 
             history.addDelta(appID: identity.id, downKB: downDeltaKB, upKB: upDeltaKB)
-            history.rememberName(identity.name, for: identity.id)
+            if downDeltaKB > 0 || upDeltaKB > 0 {
+                history.rememberName(identity.name, for: identity.id)
+            }
         }
         previousSamples = samples
 
@@ -421,7 +426,7 @@ final class NetworkMonitorEngine: ObservableObject {
 
     private func identify(pid: Int32, command: String) -> ProcessDirectory.Identity {
         if let known = appIdentity[pid] { return known }
-        let resolved = ProcessDirectory.identify(pid: pid, fallbackCommand: command)
+        let resolved = identifyProcess(pid, command)
         appIdentity[pid] = resolved
         return resolved
     }

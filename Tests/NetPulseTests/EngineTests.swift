@@ -34,8 +34,15 @@ final class EngineTests: XCTestCase {
         nettop = FakeNettop()
         history = HistoryStore(directory: tempDir)
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "NetPulseTests-\(UUID().uuidString)"))
+        // Every live pid here is a `sleep`, so name them after the canned
+        // command instead of their executable.
         engine = NetworkMonitorEngine(nettop: nettop, connections: ConnectionSampler(),
-                                      history: history, defaults: defaults)
+                                      history: history, defaults: defaults,
+                                      identify: { _, command in
+                                          ProcessDirectory.Identity(id: "proc." + command, name: command,
+                                                                    bundleID: "proc." + command,
+                                                                    statusHint: "后台进程")
+                                      })
     }
 
     override func tearDown() async throws {

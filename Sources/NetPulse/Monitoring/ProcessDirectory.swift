@@ -34,9 +34,32 @@ enum ProcessDirectory {
         if let app = NSRunningApplication(processIdentifier: pid) {
             return identity(for: app, statusHint: "运行中")
         }
-        let cleaned = fallbackCommand.isEmpty ? "pid-\(pid)" : fallbackCommand
+        let cleaned = processName(pid: pid, command: fallbackCommand)
         let key = "proc." + cleaned
         return Identity(id: key, name: cleaned, bundleID: key, statusHint: "后台进程")
+    }
+
+    /// The executable's file name when the path is readable, which is both
+    /// untruncated (nettop cuts names at 15 characters) and free of
+    /// arguments. The reported command can't be trusted for that: a process
+    /// may retitle itself with its whole command line — `npm exec` does,
+    /// secrets in its flags included — and the name becomes the row's id,
+    /// shown on screen and saved to history on disk.
+    static func processName(pid: Int32, command: String) -> String {
+        if let path = executablePath(of: pid) {
+            let base = (path as NSString).lastPathComponent
+            if !base.isEmpty { return base }
+        }
+        return sanitizedCommand(command, pid: pid)
+    }
+
+    /// Without a path, keep what precedes the first flag and cap the length,
+    /// so a retitled command line still can't carry its arguments along.
+    static func sanitizedCommand(_ command: String, pid: Int32) -> String {
+        var name = command
+        if let flag = name.range(of: " -") { name = String(name[..<flag.lowerBound]) }
+        name = String(name.trimmingCharacters(in: .whitespaces).prefix(40))
+        return name.isEmpty ? "pid-\(pid)" : name
     }
 
     private static func identity(for app: NSRunningApplication, statusHint: String) -> Identity {

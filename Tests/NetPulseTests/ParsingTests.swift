@@ -55,3 +55,22 @@ final class ParsingTests: XCTestCase {
         XCTAssertNil(snapshot.listeners[5353], "UDP sockets are not listeners")
     }
 }
+
+final class ProcessNameTests: XCTestCase {
+    func testRetitledCommandLineLosesItsArguments() {
+        XCTAssertEqual(ProcessDirectory.sanitizedCommand("npm exec @scope/tool --token=abc123 --verbose", pid: 42),
+                       "npm exec @scope/tool")
+    }
+
+    func testPlainNamesAreKept() {
+        XCTAssertEqual(ProcessDirectory.sanitizedCommand("Google Chrome H", pid: 42), "Google Chrome H")
+        XCTAssertEqual(ProcessDirectory.sanitizedCommand("", pid: 42), "pid-42")
+    }
+
+    func testLiveProcessIsNamedAfterItsExecutable() {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let name = ProcessDirectory.processName(pid: pid, command: "whatever --secret=1")
+        XCTAssertFalse(name.contains("secret"))
+        XCTAssertFalse(name.isEmpty)
+    }
+}

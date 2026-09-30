@@ -118,8 +118,24 @@ final class HistoryStore {
         if let data = try? Data(contentsOf: namesURL) {
             names = (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
         }
-        guard let data = try? Data(contentsOf: fileURL) else { return }
-        days = (try? JSONDecoder().decode([String: [String: DailyTotals]].self, from: data)) ?? [:]
+        if let data = try? Data(contentsOf: fileURL) {
+            days = (try? JSONDecoder().decode([String: [String: DailyTotals]].self, from: data)) ?? [:]
+        }
+        purgeCommandLineIDs()
+    }
+
+    /// Builds before process names were taken from the executable could
+    /// save a retitled command line — arguments, tokens and all — as an
+    /// app id. Those rows are dropped rather than kept on disk.
+    private func purgeCommandLineIDs() {
+        func leaky(_ id: String) -> Bool { id.hasPrefix("proc.") && id.contains(" -") }
+        let before = names.count + days.values.reduce(0) { $0 + $1.count }
+        names = names.filter { !leaky($0.key) }
+        days = days.mapValues { $0.filter { !leaky($0.key) } }
+        if names.count + days.values.reduce(0, { $0 + $1.count }) != before {
+            dirty = true
+            saveIfDirty()
+        }
     }
 
     func saveIfDirty() {
