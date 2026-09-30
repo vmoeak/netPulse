@@ -256,22 +256,25 @@ final class NetworkMonitorEngine: ObservableObject {
     /// Top of scale for the list's trend lines: the busiest of them, so a
     /// trickle no longer draws as tall as a download.
     var trendScaleMax: Double {
-        let peak = listedApps.lazy.flatMap { $0.downHistory.suffix(24) + $0.upHistory.suffix(24) }.max() ?? 0
-        return max(peak, 1)
+        var peak: Double = 1
+        for app in listedApps {
+            peak = max(peak, app.downHistory.suffix(24).max() ?? 0, app.upHistory.suffix(24).max() ?? 0)
+        }
+        return peak
     }
 
     /// The `count` apps that moved the most over `window`, with their
     /// average rates; for the popover, independent of the list's window.
     func topApps(over window: RateWindow, count: Int) -> [(app: AppUsage, downKBps: Double, upKBps: Double)] {
         let span = max(1, min(window.seconds, tickCount))
-        return countedApps.map { app in
-            (app, app.downHistory.suffix(span).reduce(0, +) / Double(span),
-             app.upHistory.suffix(span).reduce(0, +) / Double(span))
+        var entries: [(app: AppUsage, downKBps: Double, upKBps: Double)] = []
+        for app in countedApps {
+            let down: Double = app.downHistory.suffix(span).reduce(0, +) / Double(span)
+            let up: Double = app.upHistory.suffix(span).reduce(0, +) / Double(span)
+            if down + up >= Self.idleRateKBps { entries.append((app, down, up)) }
         }
-        .filter { $0.1 + $0.2 >= Self.idleRateKBps }
-        .sorted { $0.1 + $0.2 > $1.1 + $1.2 }
-        .prefix(count)
-        .map { $0 }
+        entries.sort { $0.downKBps + $0.upKBps > $1.downKBps + $1.upKBps }
+        return Array(entries.prefix(count))
     }
 
     /// One layer of the stacked traffic chart.
@@ -291,16 +294,28 @@ final class NetworkMonitorEngine: ObservableObject {
         func bucketed(_ app: AppUsage) -> [Double] {
             let down = Array(app.downHistory.suffix(span)), up = Array(app.upHistory.suffix(span))
             // Apps seen for less than the window are padded with leading zeros.
-            let series = Array(repeating: 0.0, count: span - down.count)
-                + zip(down, up + Array(repeating: 0, count: max(0, down.count - up.count))).map { $0 + $1 }
-            return stride(from: 0, to: series.count, by: perBucket).map { start in
-                let chunk = series[start..<min(start + perBucket, series.count)]
-                return chunk.reduce(0, +) / Double(chunk.count)
+            var series = [Double](repeating: 0, count: span - down.count)
+            for i in down.indices {
+                let upValue: Double = i < up.count ? up[i] : 0
+                series.append(down[i] + upValue)
             }
+            var points: [Double] = []
+            var start = 0
+            while start < series.count {
+                let end = min(start + perBucket, series.count)
+                let sum: Double = series[start..<end].reduce(0, +)
+                points.append(sum / Double(end - start))
+                start = end
+            }
+            return points
         }
-        let ranked = countedApps.map { (app: $0, series: bucketed($0)) }
-            .filter { $0.series.contains { $0 > 0 } }
-            .sorted { $0.series.reduce(0, +) > $1.series.reduce(0, +) }
+        var ranked: [(app: AppUsage, series: [Double], total: Double)] = []
+        for app in countedApps {
+            let series = bucketed(app)
+            let total: Double = series.reduce(0, +)
+            if total > 0 { ranked.append((app, series, total)) }
+        }
+        ranked.sort { $0.total > $1.total }
         var layers = ranked.prefix(top).map { StackLayer(id: $0.app.id, name: $0.app.name, values: $0.series) }
         let rest = ranked.dropFirst(top)
         if let first = rest.first {
