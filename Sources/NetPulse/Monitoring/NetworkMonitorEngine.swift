@@ -719,7 +719,7 @@ final class NetworkMonitorEngine: ObservableObject {
             let appID = String(endpoint.dropFirst(Self.forwardPrefix.count))
             // The app's name alone: "为 Google Chrome 转发" got its name
             // cut in the middle in the host column.
-            return (forwardedAppNames[appID] ?? appID, "代理为这个 App 转发的流量")
+            return (forwardedAppNames[appID] ?? appID, "代理转发")
         }
         if endpoint.hasPrefix(Self.loopbackPrefix),
            let port = Int(endpoint.dropFirst(Self.loopbackPrefix.count)) {

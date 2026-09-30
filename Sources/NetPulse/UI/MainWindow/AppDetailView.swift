@@ -137,13 +137,13 @@ struct AppDetailView: View {
                 Text("域名").frame(maxWidth: .infinity, alignment: .leading)
                 // Per-host rates split the app's rate by connection count;
                 // nettop reports no per-connection bytes.
-                Text("实时（估算）").frame(width: 100, alignment: .trailing)
+                Text("实时（估算）").frame(width: 84, alignment: .trailing)
                     .help("按连接数平摊该 App 的实时速率得出的估算值")
                 // Host totals count from this launch, unlike the tiles above,
                 // which follow the chosen range.
-                Text("本次下载").frame(width: 96, alignment: .trailing)
+                Text("本次下载").frame(width: 80, alignment: .trailing)
                     .help("本次启动以来经过该主机的流量")
-                Text("本次上传").frame(width: 92, alignment: .trailing)
+                Text("本次上传").frame(width: 80, alignment: .trailing)
                     .help("本次启动以来经过该主机的流量")
                 Text("连接").frame(width: 52, alignment: .trailing)
             }
@@ -250,13 +250,13 @@ private struct DomainRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text("↓ \(Format.rate(domain.rateDownKBps))")
-                .frame(width: 100, alignment: .trailing)
+                .frame(width: 84, alignment: .trailing)
                 .foregroundStyle(Color(hex: 0x4A4A4F))
             Text(Format.size(domain.totalDownKB))
-                .frame(width: 96, alignment: .trailing)
+                .frame(width: 80, alignment: .trailing)
                 .foregroundStyle(Theme.textPrimary)
             Text(Format.size(domain.totalUpKB))
-                .frame(width: 92, alignment: .trailing)
+                .frame(width: 80, alignment: .trailing)
                 .foregroundStyle(Theme.textSecondary)
             Text("\(domain.connectionCount)")
                 .frame(width: 52, alignment: .trailing)
