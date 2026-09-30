@@ -53,13 +53,24 @@ enum ProcessDirectory {
         return sanitizedCommand(command, pid: pid)
     }
 
-    /// Without a path, keep what precedes the first flag and cap the length,
-    /// so a retitled command line still can't carry its arguments along.
+    /// Without a path, a name that looks like a command line is cut to its
+    /// program name, so a retitled process can't carry its arguments along —
+    /// flags or not (`npm exec pkg <token>` has none).
     static func sanitizedCommand(_ command: String, pid: Int32) -> String {
-        var name = command
-        if let flag = name.range(of: " -") { name = String(name[..<flag.lowerBound]) }
-        name = String(name.trimmingCharacters(in: .whitespaces).prefix(40))
+        var name = command.trimmingCharacters(in: .whitespaces)
+        if looksLikeCommandLine(name) {
+            let program = name.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+            name = (program as NSString).lastPathComponent
+        }
+        name = String(name.prefix(40))
         return name.isEmpty ? "pid-\(pid)" : name
+    }
+
+    /// Process names are short words ("Google Chrome H", "mDNSResponder");
+    /// paths, flags, `key=value`, `@scope/pkg` or great length mean the
+    /// process retitled itself with its arguments.
+    static func looksLikeCommandLine(_ name: String) -> Bool {
+        name.count > 40 || name.contains(" -") || name.contains(where: { "/=@".contains($0) })
     }
 
     private static func identity(for app: NSRunningApplication, statusHint: String) -> Identity {

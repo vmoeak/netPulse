@@ -59,7 +59,12 @@ final class ParsingTests: XCTestCase {
 final class ProcessNameTests: XCTestCase {
     func testRetitledCommandLineLosesItsArguments() {
         XCTAssertEqual(ProcessDirectory.sanitizedCommand("npm exec @scope/tool --token=abc123 --verbose", pid: 42),
-                       "npm exec @scope/tool")
+                       "npm")
+    }
+
+    func testRetitledCommandLineWithoutFlagsIsCutToItsProgram() {
+        XCTAssertEqual(ProcessDirectory.sanitizedCommand("npm exec @mastergo/magic-mcp mg_secret123", pid: 42), "npm")
+        XCTAssertEqual(ProcessDirectory.sanitizedCommand("/usr/local/bin/node server.js", pid: 42), "node")
     }
 
     func testPlainNamesAreKept() {
@@ -72,5 +77,27 @@ final class ProcessNameTests: XCTestCase {
         let name = ProcessDirectory.processName(pid: pid, command: "whatever --secret=1")
         XCTAssertFalse(name.contains("secret"))
         XCTAssertFalse(name.isEmpty)
+    }
+}
+
+final class HistoryPurgeTests: XCTestCase {
+    func testCommandLineIDsSavedByOlderBuildsArePurged() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let leaky = "proc.npm exec @mastergo/magic-mcp mg_secret123"
+        let first = HistoryStore(directory: dir)
+        first.addDelta(appID: leaky, downKB: 10, upKB: 1)
+        first.rememberName("npm exec @mastergo/magic-mcp mg_secret123", for: leaky)
+        first.addDelta(appID: "proc.Google Chrome H", downKB: 10, upKB: 1)
+        first.saveIfDirty()
+
+        let reloaded = HistoryStore(directory: dir)
+        XCTAssertEqual(reloaded.rollup(appID: leaky, range: .all).downKB, 0)
+        XCTAssertNil(reloaded.name(for: leaky))
+        XCTAssertEqual(reloaded.rollup(appID: "proc.Google Chrome H", range: .all).downKB, 10)
+        for file in ["history.json", "app-names.json"] {
+            let text = try String(contentsOf: dir.appendingPathComponent(file))
+            XCTAssertFalse(text.contains("mg_secret123"), "\(file) still holds the token")
+        }
     }
 }

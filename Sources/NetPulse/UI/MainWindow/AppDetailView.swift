@@ -196,7 +196,11 @@ private struct DomainRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 1) {
+                // One line, elided in the middle: wrapped, "localhost:50316"
+                // read as "localhost:5031" over "6".
                 Text(domain.host).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 Text(domain.kind).font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
