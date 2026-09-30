@@ -47,8 +47,9 @@ private struct MenuBarChip: View {
             // Two 8.5pt lines with no spacing are what fit the menu bar's
             // ~22pt height.
             VStack(alignment: .trailing, spacing: 0) {
-                Text("▲ \(Format.rate(upKBps))")
+                // Download first, like everywhere else in the app.
                 Text("▼ \(Format.rate(downKBps))")
+                Text("▲ \(Format.rate(upKBps))")
             }
             .font(.system(size: 8.5, weight: .medium))
             .monospacedDigit()

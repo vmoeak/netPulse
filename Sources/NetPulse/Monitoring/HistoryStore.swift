@@ -128,8 +128,11 @@ final class HistoryStore {
     /// save a retitled command line — arguments, tokens and all — as an
     /// app id. Those rows are dropped rather than kept on disk.
     private func purgeCommandLineIDs() {
+        // "pid.<n>" ids came from bundle-less apps, named by their process
+        // title; a pid means nothing after a relaunch anyway.
         func leaky(_ id: String) -> Bool {
-            id.hasPrefix("proc.") && ProcessDirectory.looksLikeCommandLine(String(id.dropFirst("proc.".count)))
+            id.hasPrefix("pid.")
+                || (id.hasPrefix("proc.") && ProcessDirectory.looksLikeCommandLine(String(id.dropFirst("proc.".count))))
         }
         let before = names.count + days.values.reduce(0) { $0 + $1.count }
         names = names.filter { !leaky($0.key) && !ProcessDirectory.looksLikeCommandLine($0.value) }

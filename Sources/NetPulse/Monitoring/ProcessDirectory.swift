@@ -74,8 +74,17 @@ enum ProcessDirectory {
     }
 
     private static func identity(for app: NSRunningApplication, statusHint: String) -> Identity {
-        let bundleID = app.bundleIdentifier ?? "pid.\(app.processIdentifier)"
-        let name = app.localizedName ?? bundleID
+        let pid = app.processIdentifier
+        guard let bundleID = app.bundleIdentifier else {
+            // No bundle: a plain executable macOS still lists as an app (an
+            // `npm exec` node process is one). Its localizedName is the
+            // process title, which can be the whole command line with its
+            // secrets, so it is named by executable like any process.
+            let cleaned = processName(pid: pid, command: app.localizedName ?? "")
+            let key = "proc." + cleaned
+            return Identity(id: key, name: cleaned, bundleID: key, statusHint: statusHint)
+        }
+        let name = app.localizedName.map { sanitizedCommand($0, pid: pid) } ?? bundleID
         return Identity(id: bundleID, name: name, bundleID: bundleID, statusHint: statusHint)
     }
 

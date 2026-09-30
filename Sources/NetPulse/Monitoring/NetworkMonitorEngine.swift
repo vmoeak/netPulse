@@ -385,7 +385,9 @@ final class NetworkMonitorEngine: ObservableObject {
            next[sel] != nil || archivedApps.contains(where: { $0.id == sel }) {
             // keep selection
         } else {
-            selectedAppID = apps.first?.id
+            // Open on what is moving right now, not on whichever idle row
+            // the current sort puts first.
+            selectedAppID = (apps.first(where: { $0.rateDownKBps + $0.rateUpKBps > 0 }) ?? apps.first)?.id
         }
     }
 
@@ -421,7 +423,7 @@ final class NetworkMonitorEngine: ObservableObject {
             var usage = AppUsage(
                 id: id, name: name, bundleID: id,
                 badge: AppPalette.badge(bundleID: id, name: name),
-                connectionCount: 0, statusLine: "未运行",
+                connectionCount: 0, statusLine: "本次启动后未运行",
                 rateDownKBps: 0, rateUpKBps: 0,
                 totalDownKB: [:], totalUpKB: [:],
                 downHistory: [], upHistory: [], domains: [],

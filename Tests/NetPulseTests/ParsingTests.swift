@@ -100,4 +100,22 @@ final class HistoryPurgeTests: XCTestCase {
             XCTAssertFalse(text.contains("mg_secret123"), "\(file) still holds the token")
         }
     }
+
+    /// Bundle-less apps were saved as "pid.<n>" under their process title.
+    func testPidIDsSavedByOlderBuildsArePurged() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let first = HistoryStore(directory: dir)
+        first.addDelta(appID: "pid.4242", downKB: 10, upKB: 1)
+        first.rememberName("node mcp mg_secret123", for: "pid.4242")
+        first.saveIfDirty()
+
+        let reloaded = HistoryStore(directory: dir)
+        XCTAssertEqual(reloaded.rollup(appID: "pid.4242", range: .all).downKB, 0)
+        XCTAssertNil(reloaded.name(for: "pid.4242"))
+        for file in ["history.json", "app-names.json"] {
+            let text = try String(contentsOf: dir.appendingPathComponent(file))
+            XCTAssertFalse(text.contains("mg_secret123"), "\(file) still holds the token")
+        }
+    }
 }

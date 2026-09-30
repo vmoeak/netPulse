@@ -101,6 +101,9 @@ struct AppDetailView: View {
                 SparklineArea(values: app.downHistory).fill(Theme.accentBlue.opacity(0.13))
                 Sparkline(values: app.downHistory).stroke(Theme.accentBlue, lineWidth: 1.8)
                 Sparkline(values: app.upHistory).stroke(Theme.upOrange, lineWidth: 1.5)
+                if peak == 0 {
+                    Text("最近 60 秒无流量").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
+                }
             }
             .frame(height: 120)
             .clipShape(RoundedRectangle(cornerRadius: 9))
@@ -132,9 +135,16 @@ struct AppDetailView: View {
 
             HStack {
                 Text("域名").frame(maxWidth: .infinity, alignment: .leading)
-                Text("实时").frame(width: 100, alignment: .trailing)
-                Text("累计下载").frame(width: 96, alignment: .trailing)
-                Text("累计上传").frame(width: 92, alignment: .trailing)
+                // Per-host rates split the app's rate by connection count;
+                // nettop reports no per-connection bytes.
+                Text("实时（估算）").frame(width: 100, alignment: .trailing)
+                    .help("按连接数平摊该 App 的实时速率得出的估算值")
+                // Host totals count from this launch, unlike the tiles above,
+                // which follow the chosen range.
+                Text("本次下载").frame(width: 96, alignment: .trailing)
+                    .help("本次启动以来经过该主机的流量")
+                Text("本次上传").frame(width: 92, alignment: .trailing)
+                    .help("本次启动以来经过该主机的流量")
                 Text("连接").frame(width: 52, alignment: .trailing)
             }
             .font(.system(size: 10, weight: .semibold))
@@ -201,6 +211,7 @@ private struct DomainRow: View {
                 Text(domain.host).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .help(domain.host)
                 Text(domain.kind).font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
