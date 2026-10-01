@@ -116,38 +116,38 @@ struct MenuBarPopoverView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("当前占用最高")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Typo.caption)
                     .foregroundStyle(.white.opacity(0.62))
                 Spacer()
-                Text(RateWindow.live.label).font(.system(size: 11)).foregroundStyle(.white.opacity(0.62))
+                Text(RateWindow.live.label).font(Typo.captionRegular).foregroundStyle(.white.opacity(0.5))
             }
             if let top = engine.popoverTop.first {
                 HStack(spacing: 12) {
-                    IconBadge(badge: top.app.badge, size: 38, cornerRadius: 9, fontSize: 15)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(top.app.name).font(.system(size: 14, weight: .semibold))
+                    IconBadge(badge: top.app.badge, size: 36, cornerRadius: 9, fontSize: 14)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(top.app.name).font(Typo.title)
                             .lineLimit(1).truncationMode(.middle).help(top.app.name)
-                        Text(top.app.meta).font(.system(size: 11)).foregroundStyle(.white.opacity(0.62))
+                        Text(top.app.meta).font(Typo.captionRegular).foregroundStyle(.white.opacity(0.55))
                             .lineLimit(1)
                     }
                     .layoutPriority(1)
                     Spacer(minLength: 8)
-                    VStack(alignment: .trailing, spacing: 3) {
+                    VStack(alignment: .trailing, spacing: 2) {
                         Text("▼ \(Format.rate(top.downKBps))").foregroundStyle(Color(hex: 0x7EC8FF))
                         Text("▲ \(Format.rate(top.upKBps))").foregroundStyle(Color(hex: 0xFFD479))
                     }
                     .fixedSize()
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                 }
                 .padding(12)
-                .background(Color.white.opacity(0.08),
-                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(Color.white.opacity(0.07),
+                            in: RoundedRectangle(cornerRadius: Theme.cardRadius + 2, style: .continuous))
             } else {
-                Text("暂无数据").font(.system(size: 12)).foregroundStyle(.white.opacity(0.62))
+                Text("暂无数据").font(Typo.body).foregroundStyle(.white.opacity(0.62))
             }
         }
-        .padding(.horizontal, 12).padding(.top, 14).padding(.bottom, 10)
+        .padding(.horizontal, 12).padding(.top, 14).padding(.bottom, 12)
     }
 
     private var list: some View {
@@ -156,7 +156,7 @@ struct MenuBarPopoverView: View {
             ForEach(engine.popoverTop.dropFirst(), id: \.app.id) { entry in
                 HStack(spacing: 10) {
                     IconBadge(badge: entry.app.badge, size: 20, cornerRadius: 5, fontSize: 9)
-                    Text(entry.app.name).font(.system(size: 12.5)).foregroundStyle(.white.opacity(0.94))
+                    Text(entry.app.name).font(Typo.body).foregroundStyle(.white.opacity(0.92))
                         .lineLimit(1).truncationMode(.middle).help(entry.app.name)
                         .layoutPriority(1)
                     Spacer(minLength: 4)
@@ -167,9 +167,10 @@ struct MenuBarPopoverView: View {
                         .foregroundStyle(Color(hex: 0xFFD479))
                         .frame(width: 74, alignment: .trailing)
                 }
-                .font(.system(size: 11.5))
+                .font(Typo.body)
                 .monospacedDigit()
-                .padding(.horizontal, 8).padding(.vertical, 6)
+                .padding(.horizontal, 8)
+                .frame(height: 28)
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
@@ -181,10 +182,10 @@ struct MenuBarPopoverView: View {
         let top = engine.topApps(over: .fiveMinutes, count: 3)
         return VStack(alignment: .leading, spacing: 6) {
             Text("近 5 分钟占用最多")
-                .font(.system(size: 11, weight: .semibold))
+                .font(Typo.caption)
                 .foregroundStyle(.white.opacity(0.62))
             if top.isEmpty {
-                Text("这段时间没有明显流量").font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.5))
+                Text("这段时间没有明显流量").font(Typo.body).foregroundStyle(.white.opacity(0.5))
             }
             ForEach(Array(top.enumerated()), id: \.element.app.id) { index, entry in
                 HStack(spacing: 8) {
@@ -201,11 +202,12 @@ struct MenuBarPopoverView: View {
                         .foregroundStyle(Color(hex: 0xFFD479))
                         .frame(width: 74, alignment: .trailing)
                 }
-                .font(.system(size: 11.5))
+                .font(Typo.body)
                 .monospacedDigit()
+                .frame(height: 24)
             }
         }
-        .padding(.horizontal, 16).padding(.vertical, 10)
+        .padding(.horizontal, 16).padding(.vertical, 12)
     }
 
     private var footer: some View {
@@ -217,8 +219,9 @@ struct MenuBarPopoverView: View {
                 .glassButton()
                 .controlSize(.small)
         }
-        .font(.system(size: 11.5))
-        .foregroundStyle(.white.opacity(0.72))
+        .font(Typo.captionRegular)
+        .monospacedDigit()
+        .foregroundStyle(.white.opacity(0.62))
         .padding(.horizontal, 16).padding(.vertical, 10)
     }
 
