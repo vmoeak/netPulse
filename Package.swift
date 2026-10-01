@@ -15,7 +15,7 @@ let package = Package(
             exclude: [
                 "Resources/Info.plist",
                 "Resources/NetPulse.entitlements",
-                "Resources/AppIcon.png",
+                "Resources/AppIcon.iconset",
             ],
             linkerSettings: [
                 // Embeds Info.plist into the __TEXT,__info_plist section so the SPM
