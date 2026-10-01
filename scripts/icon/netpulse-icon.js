@@ -21,12 +21,15 @@
   function body(ctx, u, top, bottom) {
     const x = 100 * u, s = 824 * u;
     ctx.save();
-    ctx.shadowColor = 'rgba(0,30,80,0.30)'; ctx.shadowBlur = 28 * u; ctx.shadowOffsetY = 12 * u;
+    ctx.shadowColor = 'rgba(0,0,0,0.28)'; ctx.shadowBlur = 28 * u; ctx.shadowOffsetY = 12 * u;
     squircle(ctx, x, x, s);
     const g = ctx.createLinearGradient(0, x, 0, x + s);
     g.addColorStop(0, top); g.addColorStop(1, bottom);
     ctx.fillStyle = g; ctx.fill();
     ctx.restore();
+    // Hairline edge so light bodies still separate from a white desktop.
+    squircle(ctx, x, x, s);
+    ctx.strokeStyle = 'rgba(0,0,0,0.10)'; ctx.lineWidth = 2 * u; ctx.stroke();
 
     ctx.save();
     squircle(ctx, x, x, s); ctx.clip();
@@ -58,16 +61,30 @@
     ctx.strokeStyle = color; ctx.stroke();
   }
 
+  // Colorways for the pulse design: body gradient, trace, dot, and the
+  // tint of the glyph's drop shadow.
+  const palettes = {
+    blue:   { top: '#4FB0FF', bottom: '#0057D9', line: '#FFFFFF', dot: ORANGE, shadow: 'rgba(0,25,90,0.35)' },
+    navy:   { top: '#2C3E63', bottom: '#111A30', line: '#F1E4C6', dot: '#D4AF6A', shadow: 'rgba(0,0,0,0.40)' },
+    jade:   { top: '#2F6B5E', bottom: '#12332C', line: '#F4EEDF', dot: '#C9A15B', shadow: 'rgba(0,20,15,0.40)' },
+    slate:  { top: '#5A6A86', bottom: '#2A3348', line: '#FFFFFF', dot: '#E8A08A', shadow: 'rgba(10,15,35,0.35)' },
+    plum:   { top: '#5E4466', bottom: '#2B1D33', line: '#F3E6EC', dot: '#D9B26F', shadow: 'rgba(20,0,25,0.40)' },
+    ivory:  { top: '#FBF8F2', bottom: '#E4DDD0', line: '#1F2D4D', dot: '#C0974E', shadow: 'rgba(60,45,20,0.18)' },
+  };
+
+  function pulse(ctx, u, p) {
+    body(ctx, u, p.top, p.bottom);
+    ctx.save();
+    ctx.shadowColor = p.shadow; ctx.shadowBlur = 18 * u; ctx.shadowOffsetY = 8 * u;
+    line(ctx, u, [[230, 540], [370, 540], [430, 400], [520, 700], [590, 330], [650, 540], [730, 540]], 58, p.line);
+    ctx.beginPath(); ctx.arc(790 * u, 540 * u, 44 * u, 0, Math.PI * 2);
+    ctx.fillStyle = p.dot; ctx.fill();
+    ctx.restore();
+  }
+
   const variants = {
     // One heartbeat-style trace with a live dot at its end.
-    pulse(ctx, u) {
-      body(ctx, u, '#4FB0FF', '#0057D9');
-      ctx.save(); glyphShadow(ctx, u);
-      line(ctx, u, [[230, 540], [370, 540], [430, 400], [520, 700], [590, 330], [650, 540], [730, 540]], 58, '#fff');
-      ctx.beginPath(); ctx.arc(790 * u, 540 * u, 44 * u, 0, Math.PI * 2);
-      ctx.fillStyle = ORANGE; ctx.fill();
-      ctx.restore();
-    },
+    pulse(ctx, u) { pulse(ctx, u, palettes.blue); },
     // Download and upload as two rounded arrows.
     arrows(ctx, u) {
       body(ctx, u, '#4FB0FF', '#0057D9');
@@ -116,6 +133,9 @@
     const u = size / 1024;
     ctx.clearRect(0, 0, size, size);
     variants[variant](ctx, u);
+  }
+  for (const k of Object.keys(palettes)) {
+    if (k !== 'blue') variants['pulse-' + k] = (ctx, u) => pulse(ctx, u, palettes[k]);
   }
   drawNetPulseIcon.variants = Object.keys(variants);
   global.drawNetPulseIcon = drawNetPulseIcon;

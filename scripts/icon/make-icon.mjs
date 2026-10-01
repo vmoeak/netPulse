@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const out = path.resolve(here, '../../Sources/NetPulse/Resources/AppIcon.iconset');
-const variant = process.argv[2] ?? 'pulse';
+const variant = process.argv[2] ?? 'pulse-navy';
 const sizes = [
   [16, 'icon_16x16'], [32, 'icon_16x16@2x'], [32, 'icon_32x32'], [64, 'icon_32x32@2x'],
   [128, 'icon_128x128'], [256, 'icon_128x128@2x'], [256, 'icon_256x256'],
