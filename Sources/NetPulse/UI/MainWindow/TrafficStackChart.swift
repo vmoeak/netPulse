@@ -7,55 +7,61 @@ struct TrafficStackChart: View {
     let layers: [NetworkMonitorEngine.StackLayer]
     let window: RateWindow
 
+    /// Softened system hues, one per band; the legend uses the same
+    /// colors so a band and its dot always match. 其他 is neutral gray.
     private static let palette: [Color] = [
-        Color(hex: 0x0A84FF), Color(hex: 0x30C25F), Color(hex: 0xF0A020),
-        Color(hex: 0xA35CD8), Color(hex: 0xE0527A), Color(hex: 0x98989D),
+        Color(hex: 0x5B9CF5), Color(hex: 0x5EC28A), Color(hex: 0xE9AE52),
+        Color(hex: 0xA488DC), Color(hex: 0xE07F96), Color(hex: 0xA9A9B0),
     ]
+
+    private static func color(_ index: Int) -> Color {
+        palette[min(index, palette.count - 1)]
+    }
 
     var body: some View {
         let peak = stackedTotals.max() ?? 0
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(window == .live ? "近 1 分钟流量" : "\(window.label)流量")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                Text("峰值 \(Format.rate(peak))")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Theme.textSecondary)
-                    .monospacedDigit()
-            }
-            ZStack {
-                if peak == 0 {
-                    Text("这段时间没有流量").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
-                } else {
-                    // Drawn top layer first, each as the band from the
-                    // baseline to its cumulative sum, so later (lower)
-                    // layers paint over the upper ones' lower part.
-                    ForEach(Array(layers.enumerated().reversed()), id: \.element.id) { index, _ in
-                        StackBand(values: cumulative(through: index), peak: peak)
-                            .fill(Self.palette[min(index, Self.palette.count - 1)].opacity(0.85))
+        ChartCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(window == .live ? "近 1 分钟流量" : "\(window.label)流量")
+                        .font(Typo.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Text("峰值 \(Format.rate(peak))")
+                        .font(Typo.captionRegular)
+                        .foregroundStyle(Theme.textTertiary)
+                        .monospacedDigit()
+                }
+                ZStack {
+                    ChartGrid()
+                    if peak == 0 {
+                        Text("这段时间没有流量").font(Typo.captionRegular).foregroundStyle(Theme.textTertiary)
+                    } else {
+                        // Drawn top layer first, each as the band from the
+                        // baseline to its cumulative sum, so later (lower)
+                        // layers paint over the upper ones' lower part.
+                        ForEach(Array(layers.enumerated().reversed()), id: \.element.id) { index, _ in
+                            StackBand(values: cumulative(through: index), peak: peak * 1.08)
+                                .fill(Self.color(index))
+                        }
                     }
                 }
+                .frame(height: 56)
+                legend
             }
-            .frame(height: 64)
-            legend
+            .padding(12)
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
-        .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-        .padding(.horizontal, 12).padding(.bottom, 6)
+        .padding(.horizontal, Theme.contentPadding)
+        .padding(.bottom, 8)
     }
 
     private var legend: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             ForEach(Array(layers.enumerated()), id: \.element.id) { index, layer in
-                HStack(spacing: 4) {
-                    Circle().fill(Self.palette[min(index, Self.palette.count - 1)]).frame(width: 6, height: 6)
-                    Text(layer.name).lineLimit(1)
-                }
+                LegendDot(color: Self.color(index), label: layer.name)
             }
         }
-        .font(.system(size: 10))
+        .font(Typo.captionRegular)
         .foregroundStyle(Theme.textSecondary)
     }
 

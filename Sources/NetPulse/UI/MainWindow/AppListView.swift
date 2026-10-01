@@ -14,7 +14,7 @@ struct AppListView: View {
             }
             columnHeader
             ScrollView {
-                LazyVStack(spacing: 1) {
+                LazyVStack(spacing: 0) {
                     ForEach(engine.filteredApps) { app in
                         AppRow(app: app, selected: app.id == engine.selectedAppID, sortMode: engine.sortMode,
                                range: engine.range, window: engine.rateWindow, trendScale: trendScale)
@@ -31,31 +31,36 @@ struct AppListView: View {
         .frame(minWidth: PaneWidth.listMin,
                idealWidth: PaneWidth.listIdeal,
                maxWidth: PaneWidth.listMax)
-        .background(Theme.paneBackground)
+        .background(Theme.contentSurface)
     }
 
     private var toolbar: some View {
-        GlassGroup(spacing: 10) {
-            HStack(spacing: 10) {
+        GlassGroup(spacing: 8) {
+            HStack(spacing: 8) {
                 HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
                     TextField("搜索 App", text: $engine.searchText)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 12))
+                        .font(Typo.body)
                 }
-                .padding(.horizontal, 11)
-                .frame(height: 28)
+                .padding(.horizontal, 10)
+                .frame(height: Theme.controlHeight)
+                .background(Theme.controlFillDark, in: Capsule())
                 .glassSurface(in: Capsule(), interactive: true)
                 .frame(maxWidth: .infinity)
 
-                // A glass capsule with the chosen mode lit in the accent:
-                // the system segmented control stays flat gray outside a
-                // toolbar, even on macOS 26.
-                HStack(spacing: 2) {
+                // A glass capsule with the chosen mode raised on a neutral
+                // pill, like a macOS 26 segmented control: the system one
+                // stays flat gray outside a toolbar, even on macOS 26.
+                HStack(spacing: 0) {
                     sortSegment("实时速率", .rate)
                     sortSegment("累计流量", .total)
                 }
-                .padding(3)
+                .padding(2)
+                .frame(height: Theme.controlHeight)
+                .background(Theme.controlFillDark, in: Capsule())
                 .glassSurface(in: Capsule())
                 .fixedSize()
 
@@ -65,7 +70,7 @@ struct AppListView: View {
                             Button(window.label) { engine.rateWindow = window }
                         }
                     } label: {
-                        Text(engine.rateWindow.label).font(.system(size: 11.5, weight: .medium))
+                        Text(engine.rateWindow.label).font(Typo.bodyMedium)
                     }
                     // A borderless menu on a glass capsule of its own: a
                     // button-styled menu kept the flat gray bezel.
@@ -73,24 +78,31 @@ struct AppListView: View {
                     .menuIndicator(.visible)
                     .fixedSize()
                     .padding(.horizontal, 12)
-                    .frame(height: 28)
+                    .frame(height: Theme.controlHeight)
+                    .background(Theme.controlFillDark, in: Capsule())
                     .glassSurface(in: Capsule(), interactive: true)
                     .help("按这段时间内的平均速率排序")
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .frame(height: 52)
+        .padding(.horizontal, Theme.contentPadding)
+        .frame(height: Theme.headerHeight)
     }
 
     private func sortSegment(_ title: String, _ mode: SortMode) -> some View {
         let active = engine.sortMode == mode
         return Text(title)
-            .font(.system(size: 11.5, weight: active ? .semibold : .medium))
-            .foregroundStyle(active ? Color.white : Theme.textPrimary)
-            .padding(.horizontal, 11)
-            .frame(height: 22)
-            .background(active ? Theme.accentBlue : Color.clear, in: Capsule())
+            .font(Typo.bodyMedium)
+            .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, 12)
+            .frame(maxHeight: .infinity)
+            .background {
+                if active {
+                    Capsule()
+                        .fill(Theme.segmentFill)
+                        .shadow(color: .black.opacity(0.10), radius: 1.5, y: 0.5)
+                }
+            }
             .contentShape(Capsule())
             .onTapGesture {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { engine.sortMode = mode }
@@ -105,25 +117,24 @@ struct AppListView: View {
                 engine.showIdleApps.toggle()
             }
             .buttonStyle(.plain)
-            .font(.system(size: 11))
-            .foregroundStyle(Theme.textSecondary)
-            .padding(.vertical, 10)
+            .font(Typo.caption)
+            .foregroundStyle(Theme.accentBlue)
+            .padding(.vertical, 12)
         }
     }
 
     private var columnHeader: some View {
         HStack {
             Text("应用程序").frame(maxWidth: .infinity, alignment: .leading)
-            Text("趋势").frame(width: 76, alignment: .trailing)
+            Text("趋势").frame(width: 64, alignment: .center)
             Text(rateHeader(down: true)).frame(width: 84, alignment: .trailing)
             Text(rateHeader(down: false)).frame(width: 84, alignment: .trailing)
         }
-        .font(.system(size: 10.5, weight: .semibold))
+        .font(Typo.caption)
         .foregroundStyle(Theme.textSecondary)
-        .textCase(.uppercase)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
-        .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
+        .padding(.horizontal, Theme.contentPadding)
+        .frame(height: 28)
+        .overlay(Rectangle().fill(Theme.hairline).frame(height: 0.5), alignment: .bottom)
     }
 
     private func rateHeader(down: Bool) -> String {
@@ -152,28 +163,30 @@ private struct AppRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            IconBadge(badge: app.badge)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(app.name).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
+            IconBadge(badge: app.badge, size: 24, cornerRadius: 6, fontSize: 10)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(app.name).font(Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1).truncationMode(.middle)
                 if sortMode == .rate && app.windowShare > 0 {
                     // Share of all apps' traffic over the window: bar lengths
                     // compare at a glance where numbers have to be read.
                     HStack(spacing: 6) {
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
-                                Capsule().fill(Theme.fillStrong)
-                                Capsule().fill(Theme.accentBlue.opacity(0.75))
+                                Capsule().fill(Color.primary.opacity(0.07))
+                                Capsule().fill(Theme.accentBlue.opacity(0.55))
                                     .frame(width: max(2, geo.size.width * app.windowShare))
                             }
                         }
-                        .frame(width: 70, height: 4)
+                        .frame(width: 64, height: 3)
                         Text(app.windowShare < 0.01 ? "<1%" : "\(Int((app.windowShare * 100).rounded()))%")
-                            .font(.system(size: 10.5))
+                            .font(Typo.captionRegular)
                             .foregroundStyle(Theme.textSecondary)
+                            .monospacedDigit()
                     }
-                    .frame(height: 13)
+                    .frame(height: 12)
                 } else {
-                    Text(app.meta).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                    Text(app.meta).font(Typo.captionRegular).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 }
             }
             .padding(.leading, 10)
@@ -181,29 +194,24 @@ private struct AppRow: View {
 
             ZStack {
                 Sparkline(values: Array(app.downHistory.suffix(24)), scaleMax: trendScale)
-                    .stroke(Theme.accentBlue, lineWidth: 1.4)
+                    .stroke(Theme.accentBlue.opacity(0.6), lineWidth: 1.2)
                 Sparkline(values: Array(app.upHistory.suffix(24)), scaleMax: trendScale)
-                    .stroke(Theme.upOrange, lineWidth: 1.2)
+                    .stroke(Theme.upOrange.opacity(0.6), lineWidth: 1.2)
             }
-            .frame(width: 68, height: 24)
-            .frame(width: 76, alignment: .trailing)
+            .frame(width: 56, height: 20)
+            .frame(width: 64)
 
-            Text(sortMode == .rate ? Format.rate(shownDown) : Format.size(app.totalDownKB[range] ?? 0))
+            RateText(sortMode == .rate ? Format.rate(shownDown) : Format.size(app.totalDownKB[range] ?? 0),
+                     font: Typo.bodyMedium, color: Theme.accentBlue)
                 .frame(width: 84, alignment: .trailing)
-                .foregroundStyle(Theme.accentBlue)
-            Text(sortMode == .rate ? Format.rate(shownUp) : Format.size(app.totalUpKB[range] ?? 0))
+            RateText(sortMode == .rate ? Format.rate(shownUp) : Format.size(app.totalUpKB[range] ?? 0),
+                     font: Typo.bodyMedium, color: Theme.upOrangeText)
                 .frame(width: 84, alignment: .trailing)
-                .foregroundStyle(Theme.upOrangeText)
         }
-        .font(.system(size: 12, weight: .semibold))
-        .monospacedDigit()
-        .padding(7)
-        .background(selected ? Theme.accentBlue.opacity(0.14) : Color.clear,
+        .padding(.horizontal, 8)
+        .frame(height: 44)
+        .background(selected ? Theme.selectionFill : Color.clear,
                     in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous)
-                .stroke(Theme.accentBlue.opacity(selected ? 0.28 : 0), lineWidth: 0.5)
-        }
         .opacity(app.isPaused ? 0.5 : 1)
     }
 }
