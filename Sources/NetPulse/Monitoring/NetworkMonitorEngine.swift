@@ -65,6 +65,10 @@ final class NetworkMonitorEngine: ObservableObject {
     private var latestListeners: [Int: ListenerInfo] = [:]
     /// Client end of each loopback connection, by its ephemeral port.
     private var latestLoopbackClients: [Int: ListenerInfo] = [:]
+    /// The same from nettop's connections, which, unlike lsof run as the
+    /// user, also lists root daemons' sockets: without it a loopback peer
+    /// that is a root process could only be called "本机进程".
+    private var nettopLoopbackPorts: [Int: ListenerInfo] = [:]
     /// Names for "forward:<app id>" endpoints, kept after the app's
     /// connections close so their totals keep their label.
     private var forwardedAppNames: [String: String] = [:]
@@ -767,6 +771,15 @@ final class NetworkMonitorEngine: ObservableObject {
         // the next sample's full value would then be counted a second time.
         // So each counter is held at the highest value seen.
         var flows = newFlows
+        var loopbackPorts: [Int: ListenerInfo] = [:]
+        for (pid, sample) in newFlows {
+            for conn in sample.connections.values where conn.isLoopback {
+                if let port = conn.localPort, loopbackPorts[port] == nil {
+                    loopbackPorts[port] = ListenerInfo(pid: pid, command: sample.command)
+                }
+            }
+        }
+        nettopLoopbackPorts = loopbackPorts
         for (pid, sample) in newFlows {
             guard let old = previousFlows[pid] else { continue }
             var held = NettopSampler.Sample(pid: pid, command: sample.command,
@@ -1022,7 +1035,7 @@ final class NetworkMonitorEngine: ObservableObject {
     /// dozens of them, each meaningless. Those fold into one row per app
     /// the proxy is forwarding for.
     private func loopbackEndpoint(port: Int, appID: String) -> String {
-        if latestListeners[port] == nil, let client = latestLoopbackClients[port] {
+        if latestListeners[port] == nil, let client = loopbackPeer(port: port) {
             let app = identify(pid: client.pid, command: client.command)
             if app.id != appID {
                 forwardedAppNames[app.id] = app.name
@@ -1088,8 +1101,19 @@ final class NetworkMonitorEngine: ObservableObject {
         ip.hasPrefix("198.18.") || ip.hasPrefix("198.19.")
     }
 
+    /// The process on the far end of a loopback connection to `port` when
+    /// nothing listens there, i.e. the client side of it.
+    private func loopbackPeer(port: Int) -> ListenerInfo? {
+        latestLoopbackClients[port] ?? nettopLoopbackPorts[port]
+    }
+
     private func loopbackPeerLabel(port: Int) -> String {
-        guard let listener = latestListeners[port] else { return "本机进程" }
+        guard let listener = latestListeners[port] else {
+            // The client end of a connection to one of this app's own ports.
+            guard let client = loopbackPeer(port: port) else { return "本机进程" }
+            let peer = identify(pid: client.pid, command: client.command)
+            return "本机 · \(peer.name) · PID \(client.pid)"
+        }
         let peer = identify(pid: listener.pid, command: listener.command)
         // The sites behind it, when its log is readable, are listed under
         // 经代理访问的网站.

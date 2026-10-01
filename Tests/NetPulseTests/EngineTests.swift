@@ -122,6 +122,28 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(site.totalDownKB, 30, accuracy: 0.001)
     }
 
+    /// lsof run as the user doesn't list root daemons' sockets; nettop's
+    /// connections still name the process on the other end of the port.
+    func testLoopbackPeerSeenOnlyByNettopIsNamed() throws {
+        let server = try livePID(), client = try livePID()
+        func sample(_ kb: Double) -> [Int32: NettopSampler.Sample] {
+            var s = NettopSampler.Sample(pid: server, command: "beta", bytesInCumKB: kb, bytesOutCumKB: 0)
+            s.connections["a"] = NettopSampler.Connection(
+                remoteHost: "127.0.0.1", remotePort: 50568, bytesIn: kb * 1024, bytesOut: 0, localPort: 8080)
+            var c = NettopSampler.Sample(pid: client, command: "beta", bytesInCumKB: 0, bytesOutCumKB: kb)
+            c.connections["b"] = NettopSampler.Connection(
+                remoteHost: "127.0.0.1", remotePort: 8080, bytesIn: 0, bytesOut: kb * 1024, localPort: 50568)
+            return [server: s, client: c]
+        }
+        let start = Date()
+        engine.ingestFlows(sample(10), at: start)
+        engine.ingestFlows(sample(40), at: start.addingTimeInterval(3))
+        feed(server, "beta", downKB: 0)
+        engine.tick()
+        let row = try XCTUnwrap(app("proc.beta")?.domains.first { $0.host == "localhost:50568" })
+        XCTAssertEqual(row.kind, "本机 · beta · PID \(client)")
+    }
+
     func testAProcessThatStartsBetweenSamplesIsCountedFromZero() throws {
         let first = try livePID(), later = try livePID()
         let start = Date()
