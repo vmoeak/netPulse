@@ -207,6 +207,8 @@ struct AppDetailView: View {
                         captureError = error == "已取消" ? nil : error
                     }
                     .font(.system(size: 11))
+                    .glassButton()
+                    .controlSize(.small)
                 }
                 Button(engine.proxyHostCaptureInstalled ? "关闭精确统计" : "开启精确统计…") {
                     let error = engine.proxyHostCaptureInstalled
@@ -215,6 +217,8 @@ struct AppDetailView: View {
                     captureError = error == "已取消" ? nil : error
                 }
                 .font(.system(size: 11))
+                .glassButton()
+                .controlSize(.small)
                 .help("安装一个开机自启的系统服务，只读取每条连到本机代理的连接的第一句（要访问的网站），需要管理员密码")
             }
             .padding(.horizontal, 10).padding(.vertical, 6)

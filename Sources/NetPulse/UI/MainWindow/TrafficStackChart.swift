@@ -41,8 +41,9 @@ struct TrafficStackChart: View {
             .frame(height: 64)
             legend
         }
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .overlay(Rectangle().fill(Theme.hairline).frame(height: 0.5), alignment: .bottom)
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+        .padding(.horizontal, 12).padding(.bottom, 6)
     }
 
     private var legend: some View {
