@@ -23,26 +23,41 @@ enum Theme {
     static let fill = Color.primary.opacity(0.05)
     static let fillStrong = Color.primary.opacity(0.08)
 
-    /// The app list: light enough that the window's glass shows through.
-    static let paneBackground = adaptive(light: 0xFBFBFD, dark: 0x1C1C1F, opacity: 0.62)
-    /// The detail and full-width panes, where tables are read closely.
-    static let contentBackground = adaptive(light: 0xFFFFFF, dark: 0x1E1E21, opacity: 0.86)
+    /// The one content surface the list and detail share, opaque like a
+    /// Finder or System Settings content area: only the sidebar is glass.
+    static let contentSurface = Color(nsColor: .windowBackgroundColor)
+    /// Kept for the machine-wide panes, which sit on the same surface.
+    static let paneBackground = contentSurface
+    static let contentBackground = contentSurface
+
+    /// Selected rows: a soft accent wash, as in macOS 26 sidebars and lists.
+    static let selectionFill = accentBlue.opacity(0.15)
+    /// The raised pill behind a segmented control's chosen segment.
+    static let segmentFill = adaptive(light: 0xFFFFFF, dark: 0x636366, opacity: 1)
+    /// A base under toolbar glass, so the capsules keep their shape on the
+    /// dark content surface, where glass alone barely separates.
+    static let controlFillDark = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor.white.withAlphaComponent(0.07) : NSColor.clear
+    })
+    /// Fill for chart cards and other inset regions on the content surface.
+    static let cardFill = Color.primary.opacity(0.035)
 
     static let rangeToday = Color(hex: 0x0A84FF)
     static let rangeWeek = Color(hex: 0x30C25F)
     static let rangeMonth = Color(hex: 0xF0A020)
     static let rangeAll = Color(hex: 0xA35CD8)
 
-    /// A faint wash over the window's base material, so the floating glass
-    /// has some color to refract instead of reading as plain gray.
-    static let windowTint = LinearGradient(
-        colors: [accentBlue.opacity(0.14), rangeAll.opacity(0.08), upOrange.opacity(0.07)],
-        startPoint: .topLeading, endPoint: .bottomTrailing
-    )
-
     static let panelRadius: CGFloat = 18
-    static let cardRadius: CGFloat = 14
-    static let rowRadius: CGFloat = 10
+    static let cardRadius: CGFloat = 10
+    static let rowRadius: CGFloat = 8
+
+    /// Horizontal padding of every content pane, and the height every pane
+    /// header shares with the traffic lights' title-bar strip.
+    static let contentPadding: CGFloat = 16
+    static let headerHeight: CGFloat = 52
+    /// Search field, sort toggle and window menu all share this height.
+    static let controlHeight: CGFloat = 28
 
     static func adaptive(light: UInt32, dark: UInt32, opacity: CGFloat = 1) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
@@ -50,6 +65,24 @@ enum Theme {
             return NSColor(hex: isDark ? dark : light, alpha: opacity)
         })
     }
+}
+
+/// The app's whole type scale. Anything that shows a number also takes
+/// `.monospacedDigit()` so columns of figures don't jitter as they update.
+enum Typo {
+    /// Captions, column headers, secondary lines.
+    static let caption = Font.system(size: 11, weight: .medium)
+    static let captionRegular = Font.system(size: 11)
+    /// Table body.
+    static let body = Font.system(size: 12)
+    static let bodyMedium = Font.system(size: 12, weight: .medium)
+    /// Row titles.
+    static let rowTitle = Font.system(size: 13, weight: .medium)
+    static let rowTitleRegular = Font.system(size: 13)
+    /// Pane titles.
+    static let title = Font.system(size: 15, weight: .semibold)
+    /// Stat values.
+    static let stat = Font.system(size: 20, weight: .semibold, design: .rounded)
 }
 
 private extension NSColor {

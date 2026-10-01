@@ -96,7 +96,8 @@ struct IconBadge: View {
     }
 }
 
-/// One of the four stat cards at the top of the detail pane.
+/// One column of the detail pane's stat strip: a caption over a large
+/// figure, with no box around it; the strip draws the dividers between.
 struct StatTile: View {
     let label: String
     let value: String
@@ -104,16 +105,87 @@ struct StatTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
-            Text(value)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(valueColor)
-                .monospacedDigit()
+            Text(label).font(Typo.caption).foregroundStyle(Theme.textSecondary).lineLimit(1)
+            RateText(value, font: Typo.stat, unitFont: .system(size: 13, weight: .medium, design: .rounded),
+                     color: valueColor)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+    }
+}
+
+/// A figure such as "12.4 KB/s" or "3.1 GB", with the unit set quieter than
+/// the number so a column of values reads by magnitude first.
+struct RateText: View {
+    let number: String
+    let unit: String
+    let font: Font
+    let unitFont: Font
+    let color: Color
+
+    init(_ text: String, font: Font, unitFont: Font? = nil, color: Color) {
+        if let space = text.lastIndex(of: " ") {
+            number = String(text[..<space])
+            unit = String(text[text.index(after: space)...])
+        } else {
+            number = text
+            unit = ""
+        }
+        self.font = font
+        self.unitFont = unitFont ?? font
+        self.color = color
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 2) {
+            Text(number).font(font).foregroundStyle(color)
+            if !unit.isEmpty {
+                Text(unit).font(unitFont).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .monospacedDigit()
+        .lineLimit(1)
+        .fixedSize()
+    }
+}
+
+/// The card every chart sits on: a faint fill and a 10pt continuous corner.
+struct ChartCard<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .background(Theme.cardFill, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
+    }
+}
+
+/// Faint horizontal guides behind a chart: a baseline and two grid lines.
+struct ChartGrid: View {
+    var lines: Int = 3
+
+    var body: some View {
+        GeometryReader { geo in
+            Path { path in
+                for i in 0..<lines {
+                    let y = geo.size.height * CGFloat(i) / CGFloat(max(lines - 1, 1))
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: geo.size.width, y: y))
+                }
+            }
+            .stroke(Theme.hairlineLight, style: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
+        }
+    }
+}
+
+/// A legend entry: a 6pt dot and its label.
+struct LegendDot: View {
+    let color: Color
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(label).lineLimit(1)
+        }
     }
 }
 
@@ -124,14 +196,9 @@ struct RangeDot: View {
 
     var body: some View {
         Circle()
-            .fill(selected ? color : Color.primary.opacity(0.18))
-            .frame(width: 8, height: 8)
-            .overlay(
-                Circle()
-                    .stroke(color.opacity(selected ? 0.22 : 0), lineWidth: 3)
-                    .frame(width: 14, height: 14)
-            )
-            .frame(width: 16, height: 16)
+            .fill(selected ? color : Color.primary.opacity(0.2))
+            .frame(width: 7, height: 7)
+            .frame(width: 18, height: 16)
     }
 }
 

@@ -108,31 +108,26 @@ private struct GlassButton: ViewModifier {
 }
 
 extension View {
-    /// A content pane floating on the window's glass: a rounded, near-opaque
-    /// card, so tables stay easy to read while the window around them is
-    /// glass. Its 10pt gutter is what PaneWidth's floors leave room for.
+    /// A content pane on the window's one opaque content surface. The panes
+    /// meet edge to edge, divided by a hairline, the way Finder's and System
+    /// Settings' content areas do; only the sidebar floats as glass.
     func contentCard() -> some View {
-        let shape = RoundedRectangle(cornerRadius: Theme.panelRadius, style: .continuous)
-        return self
-            .background(Theme.contentBackground, in: shape)
-            .clipShape(shape)
-            .overlay { shape.stroke(Color.primary.opacity(0.12), lineWidth: 0.5) }
-            .shadow(color: .black.opacity(0.14), radius: 14, y: 4)
-            .padding(.vertical, 8)
-            .padding(.trailing, 8)
-            .padding(.leading, 2)
+        background(Theme.contentSurface)
+    }
+
+    /// The single hairline between two content panes.
+    func paneDivider(edge: Alignment = .leading) -> some View {
+        overlay(alignment: edge) {
+            Rectangle().fill(Theme.hairline).frame(width: 0.5).ignoresSafeArea()
+        }
     }
 }
 
-/// The window's base layer: the desktop blurred through the window, as on
-/// any translucent macOS window, with the theme's faint color wash on top.
+/// The window's base layer: the desktop blurred through the window. It
+/// only shows around the floating sidebar; the content panes cover the rest.
 struct WindowBackdrop: View {
     var body: some View {
-        ZStack {
-            BehindWindowBlur()
-            Theme.windowTint
-        }
-        .ignoresSafeArea()
+        BehindWindowBlur().ignoresSafeArea()
     }
 }
 
