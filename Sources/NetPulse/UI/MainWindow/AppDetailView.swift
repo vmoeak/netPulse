@@ -160,12 +160,11 @@ struct AppDetailView: View {
                 Text("域名").frame(maxWidth: .infinity, alignment: .leading)
                 Text("实时").frame(width: 84, alignment: .trailing)
                     .help("按每条连接实测的字节数，每 3 秒更新")
-                // Host totals count from this launch, unlike the tiles above,
-                // which follow the chosen range.
-                Text("本次下载").frame(width: 80, alignment: .trailing)
-                    .help("本次启动以来经过该主机的流量")
-                Text("本次上传").frame(width: 80, alignment: .trailing)
-                    .help("本次启动以来经过该主机的流量")
+                // Host totals follow the chosen range, like the tiles above.
+                Text("下载 · \(engine.range.label)").frame(width: 80, alignment: .trailing)
+                    .help("所选时间范围内经过该主机的流量，与上方累计同一范围")
+                Text("上传 · \(engine.range.label)").frame(width: 80, alignment: .trailing)
+                    .help("所选时间范围内经过该主机的流量，与上方累计同一范围")
                 Text("连接").frame(width: 44, alignment: .trailing)
             }
             .font(Typo.caption)
@@ -177,7 +176,7 @@ struct AppDetailView: View {
 
             let visits = engine.proxyVisits(of: app)
             if app.domains.isEmpty && visits.isEmpty {
-                Text(app.isLive ? "暂无活跃连接" : "本次启动后未运行，只有历史累计").font(Typo.body).foregroundStyle(Theme.textTertiary).padding(.top, 16)
+                Text(app.isLive ? "暂无活跃连接" : "\(engine.range.label)没有按主机记录的流量").font(Typo.body).foregroundStyle(Theme.textTertiary).padding(.top, 16)
                 Spacer()
             } else {
                 ScrollView {
