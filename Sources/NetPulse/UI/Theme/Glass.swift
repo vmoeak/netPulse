@@ -107,6 +107,23 @@ private struct GlassButton: ViewModifier {
     }
 }
 
+extension View {
+    /// A content pane floating on the window's glass: a rounded, near-opaque
+    /// card, so tables stay easy to read while the window around them is
+    /// glass. Its 10pt gutter is what PaneWidth's floors leave room for.
+    func contentCard() -> some View {
+        let shape = RoundedRectangle(cornerRadius: Theme.panelRadius, style: .continuous)
+        return self
+            .background(Theme.contentBackground, in: shape)
+            .clipShape(shape)
+            .overlay { shape.stroke(Theme.hairline, lineWidth: 0.5) }
+            .shadow(color: .black.opacity(0.08), radius: 12, y: 3)
+            .padding(.vertical, 8)
+            .padding(.trailing, 8)
+            .padding(.leading, 2)
+    }
+}
+
 /// The window's base layer: the desktop blurred through the window, as on
 /// any translucent macOS window, with the theme's faint color wash on top.
 struct WindowBackdrop: View {

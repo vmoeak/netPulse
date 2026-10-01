@@ -14,7 +14,9 @@ struct Sparkline: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
         guard values.count > 1 else { return path }
-        let maxValue = max(scaleMax ?? values.max() ?? 1, 1)
+        // A floor only to avoid dividing by zero: the old 1 KB/s floor drew
+        // an app idling at a few hundred bytes a second as a flat line.
+        let maxValue = max(scaleMax ?? values.max() ?? 1, 0.01)
         let n = values.count
         let usableHeight = max(0, rect.height - verticalPadding * 2)
         for (i, v) in values.enumerated() {
@@ -31,11 +33,12 @@ struct Sparkline: Shape {
 struct SparklineArea: Shape {
     var values: [Double]
     var verticalPadding: CGFloat = 8
+    var scaleMax: Double? = nil
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
         guard values.count > 1 else { return path }
-        let maxValue = max(values.max() ?? 1, 1)
+        let maxValue = max(scaleMax ?? values.max() ?? 1, 0.01)
         let n = values.count
         let usableHeight = max(0, rect.height - verticalPadding * 2)
         path.move(to: CGPoint(x: rect.minX, y: rect.maxY))

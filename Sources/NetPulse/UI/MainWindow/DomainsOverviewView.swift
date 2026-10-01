@@ -31,8 +31,8 @@ struct DomainsOverviewView: View {
                 }
             }
         }
-        .frame(minWidth: PaneWidth.detailMin, maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.contentBackground)
+        .frame(minWidth: PaneWidth.detailMin - 10, maxWidth: .infinity, maxHeight: .infinity)
+        .contentCard()
     }
 
     private var columnHeader: some View {

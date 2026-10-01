@@ -80,11 +80,31 @@ private struct WindowFloor: NSViewRepresentable {
 
     private func apply(to window: NSWindow?) {
         guard let window else { return }
+        insetTrafficLights(of: window)
         window.contentMinSize = size
         let content = window.contentRect(forFrameRect: window.frame).size
         guard content.width < size.width || content.height < size.height else { return }
         let grown = NSSize(width: max(content.width, size.width),
                            height: max(content.height, size.height))
         window.setContentSize(grown)
+    }
+
+    /// A hidden title bar leaves the traffic lights in a 28pt strip, pressed
+    /// into the floating sidebar's top-left corner. An empty unified toolbar
+    /// makes that strip 52pt, which centers the lights lower and further in,
+    /// where macOS 26 puts them on its own floating sidebars. The toolbar
+    /// draws nothing: the title bar is transparent and has no items.
+    private func insetTrafficLights(of window: NSWindow) {
+        // Runs on every update of the window's content, so it only acts when
+        // something (a first appearance, SwiftUI resetting the window) undid it.
+        guard window.toolbar == nil || window.toolbarStyle != .unified else { return }
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+        if window.toolbar == nil {
+            let toolbar = NSToolbar(identifier: "NetPulseMainWindow")
+            window.toolbar = toolbar
+        }
+        window.toolbarStyle = .unified
     }
 }

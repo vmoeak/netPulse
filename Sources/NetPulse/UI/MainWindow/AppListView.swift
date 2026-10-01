@@ -32,7 +32,6 @@ struct AppListView: View {
                idealWidth: PaneWidth.listIdeal,
                maxWidth: PaneWidth.listMax)
         .background(Theme.paneBackground)
-        .overlay(Rectangle().fill(Theme.hairline).frame(width: 0.5), alignment: .trailing)
     }
 
     private var toolbar: some View {
@@ -49,29 +48,49 @@ struct AppListView: View {
                 .glassSurface(in: Capsule(), interactive: true)
                 .frame(maxWidth: .infinity)
 
-                // The system segmented control: on macOS 26 it is drawn in
-                // Liquid Glass, with the selection sliding between segments.
-                Picker("", selection: $engine.sortMode) {
-                    Text("实时速率").tag(SortMode.rate)
-                    Text("累计流量").tag(SortMode.total)
+                // A glass capsule with the chosen mode lit in the accent:
+                // the system segmented control stays flat gray outside a
+                // toolbar, even on macOS 26.
+                HStack(spacing: 2) {
+                    sortSegment("实时速率", .rate)
+                    sortSegment("累计流量", .total)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                .padding(3)
+                .glassSurface(in: Capsule())
                 .fixedSize()
 
                 if engine.sortMode == .rate {
-                    Picker("", selection: $engine.rateWindow) {
-                        ForEach(RateWindow.allCases) { Text($0.label).tag($0) }
+                    Menu {
+                        ForEach(RateWindow.allCases) { window in
+                            Button(window.label) { engine.rateWindow = window }
+                        }
+                    } label: {
+                        Text(engine.rateWindow.label).font(.system(size: 11.5, weight: .medium))
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
+                    .menuStyle(.button)
+                    .menuIndicator(.visible)
                     .fixedSize()
+                    .glassButton()
                     .help("按这段时间内的平均速率排序")
                 }
             }
         }
         .padding(.horizontal, 14)
         .frame(height: 52)
+    }
+
+    private func sortSegment(_ title: String, _ mode: SortMode) -> some View {
+        let active = engine.sortMode == mode
+        return Text(title)
+            .font(.system(size: 11.5, weight: active ? .semibold : .medium))
+            .foregroundStyle(active ? Color.white : Theme.textPrimary)
+            .padding(.horizontal, 11)
+            .frame(height: 22)
+            .background(active ? Theme.accentBlue : Color.clear, in: Capsule())
+            .contentShape(Capsule())
+            .onTapGesture {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { engine.sortMode = mode }
+            }
     }
 
     @ViewBuilder private var idleToggle: some View {

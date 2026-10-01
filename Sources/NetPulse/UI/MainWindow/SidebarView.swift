@@ -42,7 +42,7 @@ struct SidebarView: View {
             }
             .padding(.horizontal, 8)
             // Clears the traffic lights, which sit on the glass.
-            .padding(.top, 40)
+            .padding(.top, 46)
 
             Spacer(minLength: 0)
 

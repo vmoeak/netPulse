@@ -19,17 +19,21 @@ struct AppDetailView: View {
                     domainSection(app)
                 }
             } else {
-                VStack {
+                VStack(spacing: 10) {
                     Spacer()
+                    Image(systemName: "app.connected.to.app.below.fill")
+                        .font(.system(size: 34, weight: .light))
+                        .foregroundStyle(Theme.textTertiary)
                     Text("选择左侧的 App 查看详情").foregroundStyle(Theme.textSecondary)
                     Spacer()
                 }
+                .frame(maxWidth: .infinity)
             }
         }
         // PaneWidth.detailMin is what the domain table's fixed columns plus
         // their padding occupy; below it the right-hand columns get cut off.
-        .frame(minWidth: PaneWidth.detailMin, maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.contentBackground)
+        .frame(minWidth: PaneWidth.detailMin - 10, maxWidth: .infinity, maxHeight: .infinity)
+        .contentCard()
     }
 
     private func header(_ app: AppUsage) -> some View {
@@ -52,6 +56,7 @@ struct AppDetailView: View {
                             Label(app.isPaused ? "恢复统计" : "暂停统计",
                                   systemImage: app.isPaused ? "play.fill" : "pause.fill")
                         }
+                        .foregroundStyle(Theme.textPrimary)
                         .glassButton()
                     }
 
@@ -60,6 +65,7 @@ struct AppDetailView: View {
                     } label: {
                         Label("导出报告", systemImage: "square.and.arrow.up")
                     }
+                    .foregroundStyle(.white)
                     .glassButton(prominent: true)
                 }
                 .font(.system(size: 11.5, weight: .medium))
@@ -106,9 +112,13 @@ struct AppDetailView: View {
             ZStack {
                 LinearGradient(colors: [Theme.accentBlue.opacity(0.06), Theme.fill.opacity(0.4)],
                                startPoint: .top, endPoint: .bottom)
-                SparklineArea(values: down).fill(Theme.accentBlue.opacity(0.13))
-                Sparkline(values: down).stroke(Theme.accentBlue, lineWidth: 1.8)
-                Sparkline(values: up).stroke(Theme.upOrange, lineWidth: 1.5)
+                // One scale for both lines, so upload reads against download
+                // instead of each filling the plot on its own; lifted off the
+                // bottom edge so an idle line isn't lost in the border.
+                let scale = peak * 1.15
+                SparklineArea(values: down, scaleMax: scale).fill(Theme.accentBlue.opacity(0.13))
+                Sparkline(values: down, verticalPadding: 8, scaleMax: scale).stroke(Theme.accentBlue, lineWidth: 1.8)
+                Sparkline(values: up, verticalPadding: 8, scaleMax: scale).stroke(Theme.upOrange, lineWidth: 1.5)
                 if peak == 0 {
                     Text("最近 60 秒无流量").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
                 }
