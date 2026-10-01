@@ -14,7 +14,7 @@ struct DomainsOverviewView: View {
         let rollups = engine.domainRollups
         return VStack(spacing: 0) {
             PaneHeader(title: "域名总览",
-                       subtitle: "\(rollups.count) 个主机 · 跨全部 App 合并",
+                       subtitle: "\(rollups.count) 个主机 · 跨全部 App 合并 · \(engine.range.label)",
                        note: "按累计下载排序")
             columnHeader
             if rollups.isEmpty {

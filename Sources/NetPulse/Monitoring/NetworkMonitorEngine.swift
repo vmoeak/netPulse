@@ -13,7 +13,12 @@ final class NetworkMonitorEngine: ObservableObject {
     @Published var selectedAppID: String?
     @Published var sortMode: SortMode = .rate { didSet { resort() } }
     @Published var rateWindow: RateWindow = .live { didSet { resort() } }
-    @Published var range: TimeRange = .today { didSet { resort() } }
+    @Published var range: TimeRange = .today {
+        didSet {
+            refreshDomainTotals()
+            resort()
+        }
+    }
     @Published var section: SidebarSection = .apps
     @Published var popoverOpen: Bool = true
     @Published var searchText: String = ""
@@ -73,13 +78,11 @@ final class NetworkMonitorEngine: ObservableObject {
     /// IPs with a reverse lookup already under way, so an lsof pass that
     /// lands before the answer doesn't start a second one.
     private var pendingLookups: Set<String> = []
-    /// appID -> endpoint key -> this launch's estimated bytes. Kept apart
-    /// from `AppUsage.domains`, which holds only the hosts connected right
-    /// now, so a host's total survives its connections closing (and 域名总览
-    /// can keep listing it). Keys are the raw endpoint — the remote IP, or
-    /// `localhost:<port>` — so a later reverse-DNS answer relabels the row
-    /// instead of starting a second one under the new name.
-    private var hostTotals: [String: [String: HostTotals]] = [:]
+    // Per-host bytes live in `history`, by day, so a host's total survives
+    // its connections closing and NetPulse relaunching, and follows `range`
+    // like the app totals do. They are recorded under the raw endpoint — the
+    // remote IP, or `localhost:<port>` — so a later reverse-DNS answer
+    // relabels the row instead of starting a second one under the new name.
     /// The last per-connection sample, and what it measured per app and
     /// endpoint since the one before (see `ingestFlows`).
     private var previousFlows: [Int32: NettopSampler.Sample] = [:]
@@ -424,13 +427,12 @@ final class NetworkMonitorEngine: ObservableObject {
     /// since their totals are what this view ranks by.
     var domainRollups: [DomainRollup] {
         var byHost: [String: DomainRollup] = [:]
-        let names = Dictionary(apps.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
-        for (appID, hosts) in hostTotals {
-            guard let appName = names[appID] else { continue }
+        let names = Dictionary((archivedApps + apps).map { ($0.id, $0.name) }, uniquingKeysWith: { _, live in live })
+        for (appID, hosts) in history.hostTotalsByApp(range: range) {
+            guard let appName = names[appID] ?? history.name(for: appID) else { continue }
             // A proxy's "为 X 转发" rows are apps, not domains.
-            for (key, totals) in hosts where !key.hasPrefix(Self.forwardPrefix)
-                && key != Self.closedEndpoint && key != Self.unconnectedEndpoint {
-                let (host, kind) = describe(endpoint: key)
+            for (host, totals) in hosts where !Self.nonDomainKinds.contains(totals.kind) {
+                let kind = totals.kind
                 var rollup = byHost[host] ?? DomainRollup(host: host, kind: kind, rateDownKBps: 0,
                                                           totalDownKB: 0, totalUpKB: 0,
                                                           connectionCount: 0, appNames: [])
@@ -492,6 +494,7 @@ final class NetworkMonitorEngine: ObservableObject {
                 await MainActor.run {
                     self.resolvedHosts[ip] = host
                     self.pendingLookups.remove(ip)
+                    self.history.relabelHosts { $0 == ip ? self.describe(endpoint: ip) : nil }
                 }
             }
         }
@@ -607,14 +610,9 @@ final class NetworkMonitorEngine: ObservableObject {
         usage.rateUpKBps = 0
         usage.downHistory = Array((usage.downHistory + [0]).suffix(Self.historyLength))
         usage.upHistory = Array((usage.upHistory + [0]).suffix(Self.historyLength))
-        // Its hosts stay with what they carried this launch; nothing is open
-        // or moving any more.
-        usage.domains = usage.domains.map { domain in
-            var domain = domain
-            domain.rateDownKBps = 0
-            domain.connectionCount = 0
-            return domain
-        }
+        // Its hosts stay with what they carried; nothing is open or moving
+        // any more.
+        usage.domains = domainRows(for: existing.id, live: [:])
         usage.connectionCount = 0
         return usage
     }
@@ -675,7 +673,7 @@ final class NetworkMonitorEngine: ObservableObject {
                 connectionCount: 0, statusLine: "未运行",
                 rateDownKBps: 0, rateUpKBps: 0,
                 totalDownKB: [:], totalUpKB: [:],
-                downHistory: [], upHistory: [], domains: [],
+                downHistory: [], upHistory: [], domains: domainRows(for: id, live: [:]),
                 isPaused: pausedIDs.contains(id), isLive: false
             )
             for r in TimeRange.allCases {
@@ -811,16 +809,13 @@ final class NetworkMonitorEngine: ObservableObject {
         }
         var rates: [String: [String: HostTotals]] = [:]
         for (appID, flow) in byApp {
-            var totals = hostTotals[appID] ?? [:]
             var appRates: [String: HostTotals] = [:]
             for (endpoint, kb) in flow.kb {
-                totals[endpoint, default: HostTotals()].downKB += kb.downKB
-                totals[endpoint, default: HostTotals()].upKB += kb.upKB
+                recordHost(appID: appID, endpoint: endpoint, kb)
                 if let elapsed {
                     appRates[endpoint] = HostTotals(downKB: kb.downKB / elapsed, upKB: kb.upKB / elapsed)
                 }
             }
-            hostTotals[appID] = totals
             rates[appID] = appRates
         }
         flowRates = rates
@@ -842,6 +837,9 @@ final class NetworkMonitorEngine: ObservableObject {
     /// process's counters include them, but no connection row is left to
     /// say where they went.
     private static let closedEndpoint = "closed:"
+    /// Kinds of host rows that aren't a place on the network: forwarded
+    /// apps, closed connections, unconnected sockets.
+    private static let nonDomainKinds: Set<String> = ["代理转发", "连接已结束，无法再分到网站", "广播 / 本地发现"]
     /// Sockets with no fixed peer (mDNS, some UDP senders).
     private static let unconnectedEndpoint = "unconnected:"
 
@@ -908,7 +906,6 @@ final class NetworkMonitorEngine: ObservableObject {
         // endpoint.
         var tickKB: [String: HostTotals] = [:]
         var connCounts: [String: Int] = [:]
-        var appHostTotals = hostTotals[id] ?? [:]
         if hasFlowData {
             tickKB = flowRates[id] ?? [:]
             connCounts = flowConns[id] ?? [:]
@@ -929,50 +926,70 @@ final class NetworkMonitorEngine: ObservableObject {
             }
             // One-second tick, so the rate is also this tick's KB.
             for (endpoint, kb) in tickKB {
-                appHostTotals[endpoint, default: HostTotals()].downKB += kb.downKB
-                appHostTotals[endpoint, default: HostTotals()].upKB += kb.upKB
+                recordHost(appID: id, endpoint: endpoint, kb)
             }
-            hostTotals[id] = appHostTotals
         }
         usage.connectionCount = connCounts.values.reduce(0, +)
 
-        // Rows are the endpoints open or moving now, and every one that has
-        // carried traffic this launch: a download's host staying listed
-        // after its connection closes is the point of the breakdown.
         // Several IPs of one service often reverse-resolve to the same name;
         // they are one row, and two rows would share an id in the lists.
-        var byHost: [String: DomainUsage] = [:]
-        var shown = Set(connCounts.keys).union(tickKB.keys)
-        for (endpoint, totals) in appHostTotals where totals.downKB + totals.upKB >= 1 {
-            shown.insert(endpoint)
-        }
-        for endpoint in shown {
+        var live: [String: DomainUsage] = [:]
+        for endpoint in Set(connCounts.keys).union(tickKB.keys) {
             let (host, kind) = describe(endpoint: endpoint)
-            var row = byHost[host] ?? DomainUsage(host: host, kind: kind, rateDownKBps: 0,
-                                                  totalDownKB: 0, totalUpKB: 0, connectionCount: 0)
+            var row = live[host] ?? DomainUsage(host: host, kind: kind, rateDownKBps: 0,
+                                                totalDownKB: 0, totalUpKB: 0, connectionCount: 0)
             row.rateDownKBps += tickKB[endpoint]?.downKB ?? 0
             row.connectionCount += connCounts[endpoint] ?? 0
-            byHost[host] = row
+            live[host] = row
         }
-        // Totals come from every endpoint under that name, including ones
-        // with no connection open this tick, so a row's total never dips.
-        var totalsByHost: [String: HostTotals] = [:]
-        for (endpoint, totals) in appHostTotals {
-            let host = describe(endpoint: endpoint).host
-            guard byHost[host] != nil else { continue }
-            totalsByHost[host, default: HostTotals()].downKB += totals.downKB
-            totalsByHost[host, default: HostTotals()].upKB += totals.upKB
-        }
-        for (host, totals) in totalsByHost {
-            byHost[host]?.totalDownKB = totals.downKB
-            byHost[host]?.totalUpKB = totals.upKB
-        }
-        usage.domains = byHost.values
-            .filter { $0.connectionCount > 0 || $0.rateDownKBps > 0 || $0.totalDownKB + $0.totalUpKB >= 1 }
-            .sorted { $0.connectionCount > $1.connectionCount }
+        usage.domains = domainRows(for: id, live: live)
 
         refreshTotals(&usage)
         return usage
+    }
+
+    /// An app's host rows: the hosts open or moving now (`live`, by name),
+    /// and every one that carried traffic in the selected range — a
+    /// download's host staying listed after its connection closes is the
+    /// point of the breakdown. Totals follow `range`, like the tiles above
+    /// them, earlier launches included.
+    private func domainRows(for id: String, live: [String: DomainUsage]) -> [DomainUsage] {
+        var byHost = live
+        for (host, totals) in history.hostTotals(appID: id, range: range) {
+            var row = byHost[host] ?? DomainUsage(host: host, kind: totals.kind, rateDownKBps: 0,
+                                                  totalDownKB: 0, totalUpKB: 0, connectionCount: 0)
+            row.totalDownKB = totals.downKB
+            row.totalUpKB = totals.upKB
+            byHost[host] = row
+        }
+        return byHost.values
+            .filter { $0.connectionCount > 0 || $0.rateDownKBps > 0 || $0.totalDownKB + $0.totalUpKB >= 1 }
+            .sorted { $0.connectionCount > $1.connectionCount }
+    }
+
+    /// Re-reads every row's host totals for a newly chosen range, keeping
+    /// what is open and moving now.
+    private func refreshDomainTotals() {
+        func refreshed(_ app: AppUsage) -> AppUsage {
+            var app = app
+            let live = app.domains.filter { $0.connectionCount > 0 || $0.rateDownKBps > 0 }.map { domain -> DomainUsage in
+                var domain = domain
+                domain.totalDownKB = 0
+                domain.totalUpKB = 0
+                return domain
+            }
+            app.domains = domainRows(for: app.id, live: Dictionary(live.map { ($0.host, $0) },
+                                                                     uniquingKeysWith: { first, _ in first }))
+            return app
+        }
+        apps = apps.map(refreshed)
+        archivedApps = archivedApps.map(refreshed)
+    }
+
+    private func recordHost(appID: String, endpoint: String, _ kb: HostTotals) {
+        let (host, kind) = describe(endpoint: endpoint)
+        history.addHostDelta(appID: appID, endpoint: endpoint, host: host, kind: kind,
+                             downKB: kb.downKB, upKB: kb.upKB)
     }
 
     private func newUsage(id: String, name: String, bundleID: String, statusHint: String) -> AppUsage {
@@ -1036,7 +1053,7 @@ final class NetworkMonitorEngine: ObservableObject {
         return proxies
     }
 
-    /// Display name and kind for an endpoint key from `hostTotals`.
+    /// Display name and kind for an endpoint key (a remote IP, `localhost:<port>`, …).
     private func describe(endpoint: String) -> (host: String, kind: String) {
         if endpoint.hasPrefix(Self.sitePrefix) {
             return (String(endpoint.dropFirst(Self.sitePrefix.count)), "经系统代理")

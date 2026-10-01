@@ -9,6 +9,9 @@ in the original handoff for the design conversation).
 - **Per-app rates & totals**: real, sampled every second from `nettop -P`.
 - **Week/month/all-time rollups**: real, persisted to
   `~/Library/Application Support/NetPulse/history.json` day-by-day.
+  Per-host bytes are kept the same way, one file per day under
+  `~/Library/Application Support/NetPulse/hosts/`, so the detail pane's
+  域名明细 and 域名总览 follow the selected range like the app totals.
 - **Domain / host breakdown**: connections are real (via `lsof -i`, reverse-
   DNS resolved and cached). On a Mac running a local proxy most of a
   browser's sockets terminate at 127.0.0.1 and the real destination is known
