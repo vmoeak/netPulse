@@ -22,19 +22,20 @@ struct SidebarView: View {
                         .onTapGesture { engine.section = section }
                 }
 
-                sectionLabel("统计区间").padding(.top, 14)
+                sectionLabel("统计区间").padding(.top, 16)
 
                 ForEach(TimeRange.allCases) { range in
                     let selected = engine.range == range
-                    HStack(spacing: 9) {
+                    HStack(spacing: 8) {
                         RangeDot(color: range.dotColor, selected: selected)
                         Text(range.label)
-                            .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                            .font(Typo.rowTitleRegular)
                             .foregroundStyle(Theme.textPrimary)
                     }
-                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(selected ? Theme.fillStrong : Color.clear,
+                    .background(selected ? Theme.selectionFill : Color.clear,
                                 in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
                     .contentShape(Rectangle())
                     .onTapGesture { engine.range = range }
@@ -42,18 +43,22 @@ struct SidebarView: View {
             }
             .padding(.horizontal, 8)
             // Clears the traffic lights, which sit on the glass.
-            .padding(.top, 46)
+            .padding(.top, 44)
 
             Spacer(minLength: 0)
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
                 totalsRow(label: "下载", value: Format.rate(engine.totalDownKBps), valueColor: Theme.accentBlue, barColor: Theme.accentBlue, trackColor: Theme.accentBlue.opacity(0.16), fraction: engine.totalDownPct)
                 totalsRow(label: "上传", value: Format.rate(engine.totalUpKBps), valueColor: Theme.upOrangeTextAlt, barColor: Theme.upOrange, trackColor: Theme.upOrange.opacity(0.16), fraction: engine.totalUpPct)
                 statusLine
             }
-            .padding(12)
-            .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-            .padding(8)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            // Set apart by a hairline rather than a filled card, so the
+            // sidebar reads as one pane.
+            .overlay(alignment: .top) {
+                Rectangle().fill(Theme.hairline).frame(height: 0.5).padding(.horizontal, 16)
+            }
         }
         .frame(maxHeight: .infinity)
         .glassSurface(in: RoundedRectangle(cornerRadius: Theme.panelRadius, style: .continuous))
@@ -82,30 +87,30 @@ struct SidebarView: View {
                 Text(message).foregroundStyle(.orange)
             }
         }
-        .font(.system(size: 10.5))
+        .font(Typo.captionRegular)
         .foregroundStyle(Theme.textTertiary)
         .lineLimit(3)
-        .padding(.top, 2)
     }
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(Theme.textSecondary)
+            .font(Typo.caption)
+            .foregroundStyle(Theme.textTertiary)
             .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .padding(.top, 4)
+            .padding(.bottom, 4)
     }
 
     private func totalsRow(label: String, value: String, valueColor: Color, barColor: Color, trackColor: Color, fraction: Double) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .lastTextBaseline) {
-                Text(label).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(label).font(Typo.caption).foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Text(value).font(.system(size: 15, weight: .semibold)).foregroundStyle(valueColor).monospacedDigit()
+                RateText(value, font: .system(size: 13, weight: .semibold), color: valueColor)
             }
-            MeterBar(fraction: fraction, color: barColor, trackColor: trackColor)
-                .frame(height: 4)
-                .clipShape(RoundedRectangle(cornerRadius: 2))
+            MeterBar(fraction: fraction, color: barColor.opacity(0.85), trackColor: Color.primary.opacity(0.06))
+                .frame(height: 3)
+                .clipShape(Capsule())
         }
     }
 }
@@ -117,24 +122,25 @@ private struct NavRow: View {
     let selected: Bool
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 8) {
             Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: 16, height: 16)
-            Text(title).font(.system(size: 13, weight: selected ? .medium : .regular))
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(selected ? Theme.accentBlue : Theme.textSecondary)
+                .frame(width: 18)
+            Text(title)
+                .font(Typo.rowTitleRegular)
+                .foregroundStyle(Theme.textPrimary)
             Spacer()
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: 11))
+                    .font(Typo.captionRegular)
                     .monospacedDigit()
-                    .foregroundStyle(selected ? .white.opacity(0.8) : Theme.textSecondary)
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
-        .foregroundStyle(selected ? .white : Theme.textPrimary)
         .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .background(selected ? Theme.accentBlue : Color.clear,
+        .frame(height: 28)
+        .background(selected ? Theme.selectionFill : Color.clear,
                     in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
-        .shadow(color: Theme.accentBlue.opacity(selected ? 0.35 : 0), radius: 6, y: 2)
     }
 }
