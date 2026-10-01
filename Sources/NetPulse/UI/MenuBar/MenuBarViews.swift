@@ -100,20 +100,9 @@ struct MenuBarPopoverView: View {
         // 360 rather than the design's 340: with two fixed rate columns,
         // 340 left names like QQPCMgrDaemon cut off.
         .frame(width: 360)
-        .foregroundStyle(.white)
-        // The whole card is written white-on-dark, like the design's
-        // menu-bar panel, so the glass is tinted dark: plain glass (or
-        // `.ultraThinMaterial` before macOS 26) renders *light* in Light
-        // Appearance and washed the white text out.
-        .glassSurface(in: RoundedRectangle(cornerRadius: 20, style: .continuous),
-                      tint: Color(hex: 0x14141A).opacity(0.55))
-        // Keeps the glass (and anything semantic inside) on its dark
-        // variant even when the system is in Light Appearance.
-        .environment(\.colorScheme, .dark)
-        // The popover window itself must be dark too: left in Light
-        // Appearance, macOS draws its frame with a light rim, a white edge
-        // around the dark card.
-        .background(DarkWindowAppearance())
+        .foregroundStyle(Theme.textPrimary)
+        // Sits straight on the system's popover panel, which already follows
+        // Light/Dark Appearance like the main window; no second glass layer.
     }
 
     private var header: some View {
@@ -121,9 +110,9 @@ struct MenuBarPopoverView: View {
             HStack {
                 Text("当前占用最高")
                     .font(Typo.caption)
-                    .foregroundStyle(.white.opacity(0.62))
+                    .foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Text(RateWindow.live.label).font(Typo.captionRegular).foregroundStyle(.white.opacity(0.5))
+                Text(RateWindow.live.label).font(Typo.captionRegular).foregroundStyle(Theme.textTertiary)
             }
             if let top = engine.popoverTop.first {
                 HStack(spacing: 12) {
@@ -131,24 +120,24 @@ struct MenuBarPopoverView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(top.app.name).font(Typo.title)
                             .lineLimit(1).truncationMode(.middle).help(top.app.name)
-                        Text(top.app.meta).font(Typo.captionRegular).foregroundStyle(.white.opacity(0.55))
+                        Text(top.app.meta).font(Typo.captionRegular).foregroundStyle(Theme.textSecondary)
                             .lineLimit(1)
                     }
                     .layoutPriority(1)
                     Spacer(minLength: 8)
                     VStack(alignment: .trailing, spacing: 2) {
-                        RateText("▼ \(Format.rate(top.downKBps))", font: .system(size: 13, weight: .semibold, design: .rounded), unitFont: .system(size: 11, weight: .medium, design: .rounded), color: Color(hex: 0x7EC8FF))
-                        RateText("▲ \(Format.rate(top.upKBps))", font: .system(size: 13, weight: .semibold, design: .rounded), unitFont: .system(size: 11, weight: .medium, design: .rounded), color: Color(hex: 0xFFD479))
+                        RateText("▼ \(Format.rate(top.downKBps))", font: .system(size: 13, weight: .semibold, design: .rounded), unitFont: .system(size: 11, weight: .medium, design: .rounded), color: Theme.accentBlue)
+                        RateText("▲ \(Format.rate(top.upKBps))", font: .system(size: 13, weight: .semibold, design: .rounded), unitFont: .system(size: 11, weight: .medium, design: .rounded), color: Theme.upOrangeText)
                     }
                     .fixedSize()
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                 }
                 .padding(12)
-                .background(Color.white.opacity(0.07),
+                .background(Theme.cardFill,
                             in: RoundedRectangle(cornerRadius: Theme.cardRadius + 2, style: .continuous))
             } else {
-                Text("暂无数据").font(Typo.body).foregroundStyle(.white.opacity(0.62))
+                Text("暂无数据").font(Typo.body).foregroundStyle(Theme.textSecondary)
             }
         }
         .padding(.horizontal, 12).padding(.top, 14).padding(.bottom, 12)
@@ -160,13 +149,13 @@ struct MenuBarPopoverView: View {
             ForEach(engine.popoverTop.dropFirst(), id: \.app.id) { entry in
                 HStack(spacing: 10) {
                     IconBadge(badge: entry.app.badge, size: 20, cornerRadius: 5, fontSize: 9)
-                    Text(entry.app.name).font(Typo.body).foregroundStyle(.white.opacity(0.92))
+                    Text(entry.app.name).font(Typo.body).foregroundStyle(Theme.textPrimary)
                         .lineLimit(1).truncationMode(.middle).help(entry.app.name)
                         .layoutPriority(1)
                     Spacer(minLength: 4)
-                    RateText("▼ \(Format.rate(entry.downKBps))", font: Typo.body, color: Color(hex: 0x7EC8FF))
+                    RateText("▼ \(Format.rate(entry.downKBps))", font: Typo.body, color: Theme.accentBlue)
                         .frame(width: 74, alignment: .trailing)
-                    RateText("▲ \(Format.rate(entry.upKBps))", font: Typo.body, color: Color(hex: 0xFFD479))
+                    RateText("▲ \(Format.rate(entry.upKBps))", font: Typo.body, color: Theme.upOrangeText)
                         .frame(width: 74, alignment: .trailing)
                 }
                 .font(Typo.body)
@@ -185,21 +174,21 @@ struct MenuBarPopoverView: View {
         return VStack(alignment: .leading, spacing: 6) {
             Text("近 5 分钟占用最多")
                 .font(Typo.caption)
-                .foregroundStyle(.white.opacity(0.62))
+                .foregroundStyle(Theme.textSecondary)
             if top.isEmpty {
-                Text("这段时间没有明显流量").font(Typo.body).foregroundStyle(.white.opacity(0.5))
+                Text("这段时间没有明显流量").font(Typo.body).foregroundStyle(Theme.textTertiary)
             }
             ForEach(Array(top.enumerated()), id: \.element.app.id) { index, entry in
                 HStack(spacing: 8) {
-                    Text("\(index + 1)").foregroundStyle(.white.opacity(0.5)).frame(width: 12)
+                    Text("\(index + 1)").foregroundStyle(Theme.textTertiary).frame(width: 12)
                     IconBadge(badge: entry.app.badge, size: 18, cornerRadius: 5, fontSize: 8)
-                    Text(entry.app.name).foregroundStyle(.white.opacity(0.94))
+                    Text(entry.app.name).foregroundStyle(Theme.textPrimary)
                         .lineLimit(1).truncationMode(.middle).help(entry.app.name)
                         .layoutPriority(1)
                     Spacer(minLength: 4)
-                    RateText("▼ \(Format.rate(entry.downKBps))", font: Typo.body, color: Color(hex: 0x7EC8FF))
+                    RateText("▼ \(Format.rate(entry.downKBps))", font: Typo.body, color: Theme.accentBlue)
                         .frame(width: 74, alignment: .trailing)
-                    RateText("▲ \(Format.rate(entry.upKBps))", font: Typo.body, color: Color(hex: 0xFFD479))
+                    RateText("▲ \(Format.rate(entry.upKBps))", font: Typo.body, color: Theme.upOrangeText)
                         .frame(width: 74, alignment: .trailing)
                 }
                 .font(Typo.body)
@@ -221,27 +210,12 @@ struct MenuBarPopoverView: View {
         }
         .font(Typo.captionRegular)
         .monospacedDigit()
-        .foregroundStyle(.white.opacity(0.62))
+        .foregroundStyle(Theme.textSecondary)
         .padding(.horizontal, 16).padding(.vertical, 10)
     }
 
     private var hairline: some View {
-        Rectangle().fill(Color.white.opacity(0.12)).frame(height: 0.5).padding(.horizontal, 16)
+        Rectangle().fill(Theme.hairline).frame(height: 0.5).padding(.horizontal, 16)
     }
 }
 
-/// Puts the window hosting this view on the dark appearance, so the system
-/// frame around a dark panel (its rim and corner shading) matches it.
-private struct DarkWindowAppearance: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        // The view has no window until it is in the hierarchy.
-        DispatchQueue.main.async { view.window?.appearance = NSAppearance(named: .darkAqua) }
-        return view
-    }
-
-    func updateNSView(_ view: NSView, context: Context) {
-        guard let window = view.window, window.appearance?.name != .darkAqua else { return }
-        window.appearance = NSAppearance(named: .darkAqua)
-    }
-}
