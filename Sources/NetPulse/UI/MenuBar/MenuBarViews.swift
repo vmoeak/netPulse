@@ -110,6 +110,10 @@ struct MenuBarPopoverView: View {
         // Keeps the glass (and anything semantic inside) on its dark
         // variant even when the system is in Light Appearance.
         .environment(\.colorScheme, .dark)
+        // The popover window itself must be dark too: left in Light
+        // Appearance, macOS draws its frame with a light rim, a white edge
+        // around the dark card.
+        .background(DarkWindowAppearance())
     }
 
     private var header: some View {
@@ -223,5 +227,21 @@ struct MenuBarPopoverView: View {
 
     private var hairline: some View {
         Rectangle().fill(Color.white.opacity(0.12)).frame(height: 0.5).padding(.horizontal, 16)
+    }
+}
+
+/// Puts the window hosting this view on the dark appearance, so the system
+/// frame around a dark panel (its rim and corner shading) matches it.
+private struct DarkWindowAppearance: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        // The view has no window until it is in the hierarchy.
+        DispatchQueue.main.async { view.window?.appearance = NSAppearance(named: .darkAqua) }
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        guard let window = view.window, window.appearance?.name != .darkAqua else { return }
+        window.appearance = NSAppearance(named: .darkAqua)
     }
 }
