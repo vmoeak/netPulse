@@ -101,8 +101,12 @@ struct MenuBarPopoverView: View {
         // 340 left names like QQPCMgrDaemon cut off.
         .frame(width: 360)
         .foregroundStyle(Theme.textPrimary)
-        // Sits straight on the system's popover panel, which already follows
-        // Light/Dark Appearance like the main window; no second glass layer.
+        // Fills the system's popover panel edge to edge, which follows
+        // Light/Dark Appearance like the main window. Near-opaque: through
+        // the panel's clear glass the windows behind refracted into colored
+        // smudges across the rows, reading as a dirty inner shadow.
+        .background(Theme.contentSurface.opacity(0.94))
+        .background(ShadowRefresher())
     }
 
     private var header: some View {
@@ -219,3 +223,23 @@ struct MenuBarPopoverView: View {
     }
 }
 
+
+/// The popover grows and shrinks as apps enter and leave its lists, and the
+/// panel kept the shadow it computed for its first size, offset from its
+/// real edges. Recomputes it whenever the content's size changes.
+private struct ShadowRefresher: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { ShadowRefreshView() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class ShadowRefreshView: NSView {
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            DispatchQueue.main.async { [weak self] in self?.window?.invalidateShadow() }
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.invalidateShadow()
+        }
+    }
+}
