@@ -28,6 +28,10 @@ struct ConnectionSnapshot {
     /// local (ephemeral) port. A local proxy's sockets point at these
     /// ports, and this is what names the app it is forwarding for.
     var loopbackClients: [Int: ListenerInfo] = [:]
+    /// Every process's connections with their own byte counters, from
+    /// nettop, read in the same pass; nil when nettop couldn't be read.
+    var flows: [Int32: NettopSampler.Sample]? = nil
+    var takenAt = Date()
 }
 
 /// `Result`'s failure type has to conform to `Error`, so the human-readable
@@ -38,11 +42,10 @@ struct SamplerError: Error {
 }
 
 /// Polls `lsof -i` periodically to discover which remote hosts each process
-/// is talking to right now. This has no byte-count information — only
-/// connection presence/count — so it's paired with `NettopSampler`'s
-/// per-app rate to *estimate* a per-domain split (see
-/// `NetworkMonitorEngine`). Lighter weight than nettop's connection-level
-/// mode, so it runs on its own slower interval.
+/// is talking to right now, plus one sample of nettop's per-connection
+/// counters, which split each app's bytes by host exactly (see
+/// `NetworkMonitorEngine`). Both run on this slower interval: nettop's
+/// connection mode streamed every second cost over a full core.
 final class ConnectionSampler {
     var onSample: ((ConnectionSnapshot) -> Void)?
     var onStatusChange: ((MonitoringStatus) -> Void)?
@@ -74,7 +77,12 @@ final class ConnectionSampler {
         pollInFlight = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
-            let result = Self.runLsof()
+            var result = Self.runLsof()
+            if case .success(var snapshot) = result {
+                snapshot.flows = NettopSampler.readConnections()
+                snapshot.takenAt = Date()
+                result = .success(snapshot)
+            }
             DispatchQueue.main.async {
                 self.pollInFlight = false
                 switch result {

@@ -65,8 +65,90 @@ final class EngineTests: XCTestCase {
                                                    bytesInCumKB: downKB, bytesOutCumKB: upKB)
     }
 
+    private func flows(_ pid: Int32, _ command: String, downKB: Double,
+                       connections: [String: (host: String, downKB: Double)]) -> [Int32: NettopSampler.Sample] {
+        var sample = NettopSampler.Sample(pid: pid, command: command, bytesInCumKB: downKB, bytesOutCumKB: 0)
+        for (key, conn) in connections {
+            sample.connections[key] = NettopSampler.Connection(remoteHost: conn.host, remotePort: 443,
+                                                               bytesIn: conn.downKB * 1024, bytesOut: 0)
+        }
+        return [pid: sample]
+    }
+
     private func app(_ id: String) -> AppUsage? {
         engine.apps.first { $0.id == id }
+    }
+
+    func testConnectionCountersSplitBytesExactlyByHost() throws {
+        let pid = try livePID()
+        let start = Date()
+        engine.ingestFlows(flows(pid, "alpha", downKB: 100,
+                                 connections: ["a": ("192.0.2.10", 60), "b": ("198.18.0.23", 40)]), at: start)
+        // Two seconds later a has grown by 30, b by 50, c is new with 15,
+        // and 5 went through one that closed in between.
+        engine.ingestFlows(flows(pid, "alpha", downKB: 200,
+                                 connections: ["a": ("192.0.2.10", 90), "b": ("198.18.0.23", 90),
+                                               "c": ("192.0.2.10", 15)]),
+                           at: start.addingTimeInterval(2))
+        feed(pid, "alpha", downKB: 0)
+        engine.tick()
+        let domains = Dictionary(uniqueKeysWithValues: (app("proc.alpha")?.domains ?? []).map { ($0.host, $0) })
+        XCTAssertEqual(domains["192.0.2.10"]?.rateDownKBps ?? 0, 22.5, accuracy: 0.001)
+        XCTAssertEqual(domains["192.0.2.10"]?.totalDownKB ?? 0, 45, accuracy: 0.001)
+        XCTAssertEqual(domains["192.0.2.10"]?.connectionCount, 2)
+        XCTAssertEqual(domains["198.18.0.23"]?.totalDownKB ?? 0, 50, accuracy: 0.001)
+        XCTAssertEqual(domains["198.18.0.23"]?.kind, "经 TUN 代理")
+        XCTAssertEqual(domains["已关闭的连接"]?.totalDownKB ?? 0, 5, accuracy: 0.001)
+        XCTAssertFalse(engine.domainRollups.contains { $0.host == "已关闭的连接" })
+    }
+
+    func testCapturedProxyRequestsNameTheSiteOfALoopbackConnection() throws {
+        let pid = try livePID()
+        func sample(_ kb: Double) -> [Int32: NettopSampler.Sample] {
+            var s = NettopSampler.Sample(pid: pid, command: "alpha", bytesInCumKB: kb, bytesOutCumKB: 0)
+            s.connections["tcp4 127.0.0.1:56826<->127.0.0.1:1082"] = NettopSampler.Connection(
+                remoteHost: "127.0.0.1", remotePort: 1082, bytesIn: kb * 1024, bytesOut: 0, localPort: 56826)
+            return [pid: s]
+        }
+        let start = Date()
+        engine.ingestProxyHosts([56826: "github.com"], at: start)
+        engine.ingestFlows(sample(10), at: start)
+        engine.ingestFlows(sample(40), at: start.addingTimeInterval(3))
+        feed(pid, "alpha", downKB: 0)
+        engine.tick()
+        let site = try XCTUnwrap(app("proc.alpha")?.domains.first { $0.host == "github.com" })
+        XCTAssertEqual(site.kind, "经系统代理")
+        XCTAssertEqual(site.totalDownKB, 30, accuracy: 0.001)
+    }
+
+    func testAProcessThatStartsBetweenSamplesIsCountedFromZero() throws {
+        let first = try livePID(), later = try livePID()
+        let start = Date()
+        engine.ingestFlows(flows(first, "alpha", downKB: 0, connections: [:]), at: start)
+        // Already 1 MB in by the time the next sample sees it.
+        var next = flows(later, "beta", downKB: 1024, connections: ["a": ("192.0.2.20", 1024)])
+        next[first] = flows(first, "alpha", downKB: 0, connections: [:])[first]
+        engine.ingestFlows(next, at: start.addingTimeInterval(3))
+        feed(later, "beta", downKB: 0)
+        engine.tick()
+        let host = try XCTUnwrap(app("proc.beta")?.domains.first { $0.host == "192.0.2.20" })
+        XCTAssertEqual(host.totalDownKB, 1024, accuracy: 0.001)
+        XCTAssertNil(app("proc.beta")?.domains.first { $0.host == "已关闭的连接" })
+    }
+
+    func testAConnectionSampledWithoutCountersIsNotCountedTwice() throws {
+        let pid = try livePID()
+        let start = Date()
+        engine.ingestFlows(flows(pid, "alpha", downKB: 10, connections: ["a": ("192.0.2.10", 10)]), at: start)
+        // One sample prints the row without its counters.
+        engine.ingestFlows(flows(pid, "alpha", downKB: 20, connections: ["a": ("192.0.2.10", 0)]),
+                           at: start.addingTimeInterval(3))
+        engine.ingestFlows(flows(pid, "alpha", downKB: 40, connections: ["a": ("192.0.2.10", 40)]),
+                           at: start.addingTimeInterval(6))
+        feed(pid, "alpha", downKB: 0)
+        engine.tick()
+        let host = try XCTUnwrap(app("proc.alpha")?.domains.first { $0.host == "192.0.2.10" })
+        XCTAssertEqual(host.totalDownKB, 30, accuracy: 0.001)
     }
 
     func testHostsDisappearWhenProcessClosesItsSockets() throws {
@@ -101,6 +183,11 @@ final class EngineTests: XCTestCase {
         engine.ingestConnections(ConnectionSnapshot(connections: [], listeners: [:]))
         engine.tick()
 
+        let host = try XCTUnwrap(app("proc.alpha")?.domains.first, "a host with traffic stays listed")
+        XCTAssertEqual(host.totalDownKB, 300, accuracy: 0.001)
+        XCTAssertEqual(host.connectionCount, 0)
+        XCTAssertTrue(engine.connectionRows.isEmpty)
+
         let rollup = try XCTUnwrap(engine.domainRollups.first)
         XCTAssertEqual(rollup.totalDownKB, 300, accuracy: 0.001)
         XCTAssertEqual(rollup.connectionCount, 0)
@@ -123,7 +210,7 @@ final class EngineTests: XCTestCase {
         let beta = try XCTUnwrap(app("proc.beta"))
         XCTAssertEqual(beta.rateDownKBps, 0)
         XCTAssertEqual(beta.rateUpKBps, 0)
-        XCTAssertEqual(beta.statusLine, "已退出")
+        XCTAssertEqual(beta.statusLine, "未运行")
         XCTAssertEqual(beta.totalDownKB[.today] ?? 0, 2048, accuracy: 0.001)
         XCTAssertEqual(engine.totalDownKBps, 0, accuracy: 0.001)
     }
@@ -289,11 +376,57 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(engine.apps.first?.id, "proc.steady",
                        "a single-second burst doesn't outrank 5 seconds of steady traffic")
         let steadyRow = try XCTUnwrap(app("proc.steady"))
-        XCTAssertEqual(steadyRow.windowDownKBps, 100, accuracy: 0.001, "500 KB over the last 5 s")
+        // 实时 averages 10 s; 6 ticks so far, so over 6.
+        XCTAssertEqual(steadyRow.windowDownKBps, 500.0 / 6.0, accuracy: 0.001)
         XCTAssertEqual(steadyRow.windowShare, 500.0 / 800.0, accuracy: 0.001)
 
+        burstyKB += 3000                                // tick 7: no re-rank yet
+        feed(bursty, "bursty", downKB: burstyKB)
+        engine.tick()
+        XCTAssertEqual(app("proc.steady")?.windowShare ?? 0, 500.0 / 800.0, accuracy: 0.001,
+                       "shares hold with the order between re-ranks")
+        XCTAssertEqual(engine.apps.first?.id, "proc.steady")
+
         engine.rateWindow = .oneMinute
-        XCTAssertEqual(app("proc.steady")?.windowDownKBps ?? 0, 500.0 / 6.0, accuracy: 0.001,
-                       "averaged over the 6 ticks seen so far")
+        XCTAssertEqual(app("proc.steady")?.windowDownKBps ?? 0, 500.0 / 7.0, accuracy: 0.001,
+                       "averaged over the 7 ticks seen so far")
+        XCTAssertEqual(engine.apps.first?.id, "proc.bursty", "a new window re-ranks at once")
+    }
+
+    /// The popover ranks by the main list's 近 10 秒 average, not the last
+    /// second, and leaves idle apps out.
+    func testPopoverUsesTheTenSecondAverageAndSkipsIdleApps() throws {
+        let steady = try livePID(), bursty = try livePID(), idle = try livePID()
+        var steadyKB = 0.0
+        feed(steady, "steady", downKB: 0)
+        feed(bursty, "bursty", downKB: 0)
+        feed(idle, "idle", downKB: 0)
+        engine.tick()
+        for _ in 0..<5 {
+            steadyKB += 100
+            feed(steady, "steady", downKB: steadyKB)
+            engine.tick()
+        }
+        feed(bursty, "bursty", downKB: 200)             // a bigger last second
+        engine.tick()
+        XCTAssertEqual(engine.topApp?.id, "proc.steady")
+        XCTAssertEqual(engine.popoverTop.map(\.app.id), ["proc.steady", "proc.bursty"])
+        // 500 + 200 KB over the 7 ticks seen; the last second alone was 200.
+        XCTAssertEqual(engine.recentTotalKBps.down, 700.0 / 7.0, accuracy: 0.001)
+    }
+
+    func testStackAndTopAppsSplitTrafficByApp() throws {
+        let pids = try (0..<7).map { _ in try livePID() }
+        for (n, pid) in pids.enumerated() { feed(pid, "app\(n)", downKB: 0) }
+        engine.tick()
+        for step in 1...3 {
+            // app0 moves the most, app6 the least.
+            for (n, pid) in pids.enumerated() { feed(pid, "app\(n)", downKB: Double(step * (70 - n * 10))) }
+            engine.tick()
+        }
+        let layers = engine.stackLayers(top: 5, buckets: 90)
+        XCTAssertEqual(layers.map(\.name), ["app0", "app1", "app2", "app3", "app4", "其他"])
+        XCTAssertEqual(layers.last?.values.last ?? 0, 20 + 10, accuracy: 0.001, "其他 sums app5 and app6")
+        XCTAssertEqual(engine.topApps(over: .fiveMinutes, count: 3).map(\.app.id), ["proc.app0", "proc.app1", "proc.app2"])
     }
 }

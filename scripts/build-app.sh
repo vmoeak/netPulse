@@ -3,10 +3,10 @@
 #
 # Usage: scripts/build-app.sh [debug|release]
 #
-# Produces dist/NetPulse.app, ad-hoc code signed (signed with "-", no
-# Developer ID) so it will run locally but Gatekeeper will warn on first
-# launch on another Mac ("right-click > Open" to bypass, or replace the
-# codesign identity below with a real Developer ID for real distribution).
+# Produces dist/NetPulse.app, signed with a local identity when the keychain
+# has one (see below), ad hoc otherwise. Either runs locally; Gatekeeper
+# warns on another Mac ("right-click > Open" to bypass) unless it is a
+# notarized Developer ID build.
 set -euo pipefail
 
 CONFIG="${1:-release}"
@@ -40,8 +40,22 @@ for spec in 16:16x16 32:16x16@2x 32:32x32 64:32x32@2x 128:128x128 \
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/NetPulse.icns"
 
-echo "==> ad-hoc codesigning with entitlements"
-codesign --force --deep --sign - \
+# A stable identity keeps macOS's privacy grants (such as access to other
+# apps' data) across rebuilds; an ad-hoc signature is new every build, so
+# macOS asks again each time. SIGN_IDENTITY wins, then the first valid
+# code-signing identity in the keychain (an "Apple Development" certificate,
+# or the local one scripts/make-signing-cert.sh creates), then ad hoc.
+IDENTITY="${SIGN_IDENTITY:-}"
+if [ -z "$IDENTITY" ]; then
+  IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' 'NF > 1 { print $2; exit }')"
+fi
+if [ -n "$IDENTITY" ]; then
+  echo "==> codesigning as \"$IDENTITY\""
+else
+  IDENTITY="-"
+  echo "==> ad-hoc codesigning (run scripts/make-signing-cert.sh once to keep privacy grants across builds)"
+fi
+codesign --force --deep --sign "$IDENTITY" \
   --entitlements "Sources/NetPulse/Resources/NetPulse.entitlements" \
   "$APP"
 

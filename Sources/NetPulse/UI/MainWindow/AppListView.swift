@@ -6,21 +6,23 @@ struct AppListView: View {
     @ObservedObject var engine: NetworkMonitorEngine
 
     var body: some View {
+        let trendScale = engine.trendScaleMax
         VStack(spacing: 0) {
             toolbar
+            if engine.sortMode == .rate {
+                TrafficStackChart(layers: engine.stackLayers(), window: engine.rateWindow)
+            }
             columnHeader
             ScrollView {
                 LazyVStack(spacing: 1) {
                     ForEach(engine.filteredApps) { app in
                         AppRow(app: app, selected: app.id == engine.selectedAppID, sortMode: engine.sortMode,
-                               range: engine.range, window: engine.rateWindow)
+                               range: engine.range, window: engine.rateWindow, trendScale: trendScale)
                             .contentShape(Rectangle())
                             .onTapGesture { engine.select(appID: app.id) }
                     }
                     idleToggle
                 }
-                // Rows slide to their new places instead of jumping.
-                .animation(.easeInOut(duration: 0.35), value: engine.filteredApps.map(\.id))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
             }
@@ -75,7 +77,8 @@ struct AppListView: View {
     @ViewBuilder private var idleToggle: some View {
         let hidden = engine.hiddenIdleCount
         if hidden > 0 || engine.showIdleApps {
-            Button(engine.showIdleApps ? "隐藏从未产生流量的进程" : "显示 \(hidden) 个从未产生流量的进程") {
+            let what = engine.sortMode == .rate ? "空闲的 App（低于 1 KB/s）" : "从未产生流量的进程"
+            Button(engine.showIdleApps ? "隐藏\(what)" : "显示 \(hidden) 个\(what)") {
                 engine.showIdleApps.toggle()
             }
             .buttonStyle(.plain)
@@ -103,7 +106,8 @@ struct AppListView: View {
     private func rateHeader(down: Bool) -> String {
         switch (engine.sortMode, engine.rateWindow) {
         case (.total, _): return down ? "累计下载" : "累计上传"
-        case (.rate, .live): return down ? "下载速率" : "上传速率"
+        // Every rate window is an average, 实时 included (10 s), so the
+        // header says so; the sidebar and menu bar show the last second.
         case (.rate, _): return down ? "平均下载" : "平均上传"
         }
     }
@@ -115,11 +119,13 @@ private struct AppRow: View {
     let sortMode: SortMode
     let range: TimeRange
     let window: RateWindow
+    /// Shared top of scale for every row's trend line.
+    let trendScale: Double
 
-    /// 实时 shows this second's rate; a longer window shows its average,
-    /// which is what the list is ranked by.
-    private var shownDown: Double { window == .live ? app.rateDownKBps : app.windowDownKBps }
-    private var shownUp: Double { window == .live ? app.rateUpKBps : app.windowUpKBps }
+    /// The window's average, which is what the list is ranked by: a row
+    /// showing this second's 0 KB/s beside a 19% share read as a bug.
+    private var shownDown: Double { app.windowDownKBps }
+    private var shownUp: Double { app.windowUpKBps }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -151,9 +157,9 @@ private struct AppRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             ZStack {
-                Sparkline(values: Array(app.downHistory.suffix(24)))
+                Sparkline(values: Array(app.downHistory.suffix(24)), scaleMax: trendScale)
                     .stroke(Theme.accentBlue, lineWidth: 1.4)
-                Sparkline(values: Array(app.upHistory.suffix(24)))
+                Sparkline(values: Array(app.upHistory.suffix(24)), scaleMax: trendScale)
                     .stroke(Theme.upOrange, lineWidth: 1.2)
             }
             .frame(width: 68, height: 24)

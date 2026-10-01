@@ -84,8 +84,35 @@ enum ProcessDirectory {
             let key = "proc." + cleaned
             return Identity(id: key, name: cleaned, bundleID: key, statusHint: statusHint)
         }
-        let name = app.localizedName.map { sanitizedCommand($0, pid: pid) } ?? bundleID
+        let name = (app.bundleURL.flatMap(preferredDisplayName(ofBundleAt:)) ?? app.localizedName)
+            .map { sanitizedCommand($0, pid: pid) } ?? bundleID
         return Identity(id: bundleID, name: name, bundleID: bundleID, statusHint: statusHint)
+    }
+
+    /// The app's Chinese name when it has one, else nil (and the system's
+    /// choice is used). Chinese first on purpose rather than following the
+    /// system language order: on a Mac set to English-then-Chinese, macOS
+    /// names QQ 电脑管家's agent "umetrip", while its zh-Hans name is
+    /// 「办公安全感知」 — the one its user knows it by.
+    static func preferredDisplayName(ofBundleAt url: URL) -> String? {
+        guard let bundle = Bundle(url: url) else { return nil }
+        let chinese = bundle.localizations
+            .filter { $0.lowercased().hasPrefix("zh") }
+            .sorted { rank(ofChinese: $0) < rank(ofChinese: $1) }
+        for localization in chinese {
+            guard let path = bundle.path(forResource: "InfoPlist", ofType: "strings", inDirectory: nil,
+                                         forLocalization: localization),
+                  let strings = NSDictionary(contentsOfFile: path) as? [String: String] else { continue }
+            if let name = strings["CFBundleDisplayName"] ?? strings["CFBundleName"], !name.isEmpty { return name }
+        }
+        return nil
+    }
+
+    /// Simplified before Traditional.
+    private static func rank(ofChinese localization: String) -> Int {
+        let l = localization.lowercased()
+        if l.contains("hans") || l.hasSuffix("cn") || l == "zh" { return 0 }
+        return 1
     }
 
     /// Walks up from `pid` looking for an ancestor that is a real application

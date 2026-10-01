@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 /// 197-278 of the design.
 struct AppDetailView: View {
     @ObservedObject var engine: NetworkMonitorEngine
+    @State private var captureError: String?
 
     var body: some View {
         Group {
@@ -143,10 +144,8 @@ struct AppDetailView: View {
 
             HStack {
                 Text("域名").frame(maxWidth: .infinity, alignment: .leading)
-                // Per-host rates split the app's rate by connection count;
-                // nettop reports no per-connection bytes.
-                Text("实时（估算）").frame(width: 84, alignment: .trailing)
-                    .help("按连接数平摊该 App 的实时速率得出的估算值")
+                Text("实时").frame(width: 84, alignment: .trailing)
+                    .help("按每条连接实测的字节数，每 3 秒更新")
                 // Host totals count from this launch, unlike the tiles above,
                 // which follow the chosen range.
                 Text("本次下载").frame(width: 80, alignment: .trailing)
@@ -161,19 +160,24 @@ struct AppDetailView: View {
             .padding(.horizontal, 10).padding(.bottom, 6)
             .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
 
+            proxyCaptureNote(app)
+
             let visits = engine.proxyVisits(of: app)
             if app.domains.isEmpty && visits.isEmpty {
                 Text(app.isLive ? "暂无活跃连接" : "本次启动后未运行，只有历史累计").font(.system(size: 12)).foregroundStyle(Theme.textTertiary).padding(.top, 16)
                 Spacer()
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 1) {
-                        ForEach(domains) { d in
+                    // Not lazy, and the two lists keyed apart: a host and a
+                    // site with the same name shared an id, and a stale host
+                    // row was left drawn over the site list.
+                    VStack(spacing: 1) {
+                        ForEach(domains, id: \.host) { d in
                             DomainRow(domain: d, maxTotalDown: maxTotalDown)
                         }
                         if !visits.isEmpty {
                             proxyVisitsHeader(count: visits.count, isProxy: app.isProxy)
-                            ForEach(visits) { ProxyVisitRow(visit: $0) }
+                            ForEach(visits.map { ("site:" + $0.host, $0) }, id: \.0) { ProxyVisitRow(visit: $0.1) }
                         }
                     }
                     .padding(.top, 3)
@@ -181,6 +185,43 @@ struct AppDetailView: View {
             }
         }
         .padding(.horizontal, 22)
+    }
+
+    /// Through a system proxy an app's hosts read "经本机代理": the site is
+    /// known only once the loopback capture is installed. Offered there,
+    /// and removable from the same place.
+    @ViewBuilder
+    private func proxyCaptureNote(_ app: AppUsage) -> some View {
+        let viaProxy = app.domains.contains { $0.kind.hasPrefix("经本机代理") || $0.kind == "经系统代理" }
+        if viaProxy {
+            HStack(spacing: 8) {
+                Text(!engine.proxyHostCaptureInstalled ? "走系统代理的流量还没分到网站"
+                     : engine.proxyHostCaptureOutdated ? "精确统计服务需要更新"
+                     : "走系统代理的连接已按网站精确统计")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                if engine.proxyHostCaptureOutdated {
+                    Button("更新…") {
+                        let error = engine.installProxyHostCapture()
+                        captureError = error == "已取消" ? nil : error
+                    }
+                    .font(.system(size: 11))
+                }
+                Button(engine.proxyHostCaptureInstalled ? "关闭精确统计" : "开启精确统计…") {
+                    let error = engine.proxyHostCaptureInstalled
+                        ? engine.removeProxyHostCapture()
+                        : engine.installProxyHostCapture()
+                    captureError = error == "已取消" ? nil : error
+                }
+                .font(.system(size: 11))
+                .help("安装一个开机自启的系统服务，只读取每条连到本机代理的连接的第一句（要访问的网站），需要管理员密码")
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            if let captureError {
+                Text(captureError).font(.system(size: 11)).foregroundStyle(.red).padding(.horizontal, 10)
+            }
+        }
     }
 
     /// The proxy's log names sites but not bytes, so these rows only say

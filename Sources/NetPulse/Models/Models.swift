@@ -76,9 +76,9 @@ struct DomainRollup: Identifiable, Equatable {
 }
 
 /// The span 实时速率 ranks apps over. Ranking on a single second made the
-/// list reshuffle constantly; even 实时 uses a few seconds' average.
+/// list reshuffle constantly; even 实时 uses a 10-second average.
 enum RateWindow: Int, CaseIterable, Identifiable {
-    case live = 5
+    case live = 10
     case oneMinute = 60
     case fiveMinutes = 300
     case fifteenMinutes = 900
@@ -88,7 +88,7 @@ enum RateWindow: Int, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .live: return "实时"
+        case .live: return "近 10 秒"
         case .oneMinute: return "近 1 分钟"
         case .fiveMinutes: return "近 5 分钟"
         case .fifteenMinutes: return "近 15 分钟"
