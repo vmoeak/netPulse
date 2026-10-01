@@ -19,9 +19,18 @@ enum ProcessDirectory {
         let name: String
         let bundleID: String
         let statusHint: String
+        /// A VPN's packet tunnel: everything it moves is other apps' traffic
+        /// again, on its way into or out of the tunnel.
+        var isTunnel = false
     }
 
     static func identify(pid: Int32, fallbackCommand: String) -> Identity {
+        var identity = baseIdentity(pid: pid, fallbackCommand: fallbackCommand)
+        identity.isTunnel = executablePath(of: pid).map(isPacketTunnelProvider(executablePath:)) ?? false
+        return identity
+    }
+
+    private static func baseIdentity(pid: Int32, fallbackCommand: String) -> Identity {
         // The owning app is asked about first on purpose. Chrome's helpers are
         // themselves .app bundles with their own bundle ID, so asking about
         // the pid directly resolves to "Google Chrome Helper" and would never
@@ -137,6 +146,28 @@ enum ProcessDirectory {
             current = parent
         }
         return nil
+    }
+
+    /// Whether the executable is a Network Extension packet tunnel provider —
+    /// Shadowrocket's MacPacketTunnel, WireGuard's and most VPN clients'
+    /// tunnels — read from the Info.plist of the app extension or system
+    /// extension bundle that contains it.
+    static func isPacketTunnelProvider(executablePath path: String) -> Bool {
+        let components = (path as NSString).pathComponents
+        guard let index = components.lastIndex(where: { $0.hasSuffix(".appex") || $0.hasSuffix(".systemextension") })
+        else { return false }
+        let bundlePath = NSString.path(withComponents: Array(components[...index]))
+        guard let info = Bundle(path: bundlePath)?.infoDictionary else { return false }
+        return declaresPacketTunnel(info)
+    }
+
+    /// An app extension names its point in NSExtension; a system extension
+    /// lists its providers under NetworkExtension.NEProviderClasses.
+    static func declaresPacketTunnel(_ info: [String: Any]) -> Bool {
+        let point = (info["NSExtension"] as? [String: Any])?["NSExtensionPointIdentifier"] as? String
+        if point?.hasPrefix("com.apple.networkextension.packet-tunnel") == true { return true }
+        let providers = (info["NetworkExtension"] as? [String: Any])?["NEProviderClasses"] as? [String: Any]
+        return providers?.keys.contains { $0.hasPrefix("com.apple.networkextension.packet-tunnel") } ?? false
     }
 
     private static func parentPID(of pid: Int32) -> Int32? {
