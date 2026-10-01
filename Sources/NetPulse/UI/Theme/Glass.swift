@@ -123,22 +123,12 @@ extension View {
     }
 }
 
-/// The window's base layer: the desktop blurred through the window. It
-/// only shows around the floating sidebar; the content panes cover the rest.
+/// The window's base layer: the same surface the content panes use, so the
+/// content reads as one sheet running behind the floating sidebar, as in
+/// macOS 26 Finder. A blurred-desktop gutter around the sidebar instead made
+/// a gray band with a hard seam where the content began.
 struct WindowBackdrop: View {
     var body: some View {
-        BehindWindowBlur().ignoresSafeArea()
+        Theme.contentSurface.ignoresSafeArea()
     }
-}
-
-private struct BehindWindowBlur: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .underWindowBackground
-        view.blendingMode = .behindWindow
-        view.state = .followsWindowActiveState
-        return view
-    }
-
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
