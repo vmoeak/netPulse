@@ -393,6 +393,26 @@ final class EngineTests: XCTestCase {
         XCTAssertEqual(engine.apps.first?.id, "proc.bursty", "a new window re-ranks at once")
     }
 
+    /// The popover ranks by the main list's 近 10 秒 average, not the last
+    /// second, and leaves idle apps out.
+    func testPopoverUsesTheTenSecondAverageAndSkipsIdleApps() throws {
+        let steady = try livePID(), bursty = try livePID(), idle = try livePID()
+        var steadyKB = 0.0
+        feed(steady, "steady", downKB: 0)
+        feed(bursty, "bursty", downKB: 0)
+        feed(idle, "idle", downKB: 0)
+        engine.tick()
+        for _ in 0..<5 {
+            steadyKB += 100
+            feed(steady, "steady", downKB: steadyKB)
+            engine.tick()
+        }
+        feed(bursty, "bursty", downKB: 200)             // a bigger last second
+        engine.tick()
+        XCTAssertEqual(engine.topApp?.id, "proc.steady")
+        XCTAssertEqual(engine.popoverTop.map(\.app.id), ["proc.steady", "proc.bursty"])
+    }
+
     func testStackAndTopAppsSplitTrafficByApp() throws {
         let pids = try (0..<7).map { _ in try livePID() }
         for (n, pid) in pids.enumerated() { feed(pid, "app\(n)", downKB: 0) }

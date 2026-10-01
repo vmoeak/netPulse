@@ -378,14 +378,14 @@ final class NetworkMonitorEngine: ObservableObject {
     /// Apps whose traffic is their own, not forwarded for another app.
     private var countedApps: [AppUsage] { apps.filter { !$0.isProxy } }
 
-    var topApp: AppUsage? {
-        countedApps.max(by: { ($0.rateDownKBps + $0.rateUpKBps) < ($1.rateDownKBps + $1.rateUpKBps) })
+    /// The popover's busiest apps, by the same 近 10 秒 average the main
+    /// list ranks by (an instant value put a different app first), idle
+    /// apps left out.
+    var popoverTop: [(app: AppUsage, downKBps: Double, upKBps: Double)] {
+        topApps(over: .live, count: 5)
     }
 
-    var popoverList: [AppUsage] {
-        let sorted = countedApps.sorted { ($0.rateDownKBps + $0.rateUpKBps) > ($1.rateDownKBps + $1.rateUpKBps) }
-        return Array(sorted.dropFirst().prefix(4))
-    }
+    var topApp: AppUsage? { popoverTop.first?.app }
 
     /// 活跃连接: every app's hosts flattened into one machine-wide list,
     /// busiest first.
