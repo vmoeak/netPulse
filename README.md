@@ -9,21 +9,57 @@ in the original handoff for the design conversation).
 - **Per-app rates & totals**: real, sampled every second from `nettop -P`.
 - **Week/month/all-time rollups**: real, persisted to
   `~/Library/Application Support/NetPulse/history.json` day-by-day.
-- **Domain / host breakdown**: connections are real (via `lsof -i`, reverse-
-  DNS resolved and cached). On a Mac running a local proxy most of a
-  browser's sockets terminate at 127.0.0.1 and the real destination is known
-  only to the proxy, so those rows are labelled with the process holding the
-  listening port ("本机 · Shadowrocket") instead of an anonymous "localhost";
-  the destinations themselves show up under the proxy's own row. Per-domain **byte counts are an estimate** —
-  macOS doesn't expose per-connection throughput without the Network
-  Extension entitlement (which requires Apple approval), so an app's
-  measured rate is split across its currently-open remote hosts weighted by
-  connection count. Good for "what's this app mostly talking to," not
-  exact.
+- **Domain / host breakdown**: which hosts an app is connected to is real;
+  how many bytes went to each is an **estimate**. See
+  [How per-host numbers are estimated](#how-per-host-numbers-are-estimated).
 - **暂停该 App**: freezes that app's counters in the UI; it does not (and
   cannot, without NE) actually throttle its traffic.
 - **导出报告**: exports the selected app's current domain breakdown as CSV
   via a save panel.
+
+## How per-host numbers are estimated
+
+macOS only reports network bytes **per process**. Per-connection or per-host
+byte counts need Apple's Network Extension entitlement, which requires
+Apple's approval, and NetPulse doesn't have it. So the host table is built
+from two separate sources and a split:
+
+1. **Bytes per app** (`Monitoring/NettopSampler.swift`): `nettop -P` streams
+   each process's cumulative bytes in/out once a second. The engine turns
+   that into a per-second delta and sums the processes that belong to the
+   same app. These rates and the persisted totals are real.
+2. **Sockets per app** (`Monitoring/ConnectionSampler.swift`): `lsof -i`
+   runs every 3 seconds and counts each process's open TCP and UDP sockets
+   by remote IP. Sockets to `127.0.0.1`/`::1` are counted by port instead,
+   and labelled with the process listening on that port. Remote IPs are
+   reverse-DNS resolved in the background (cached for 10 minutes) and shown
+   as the raw IP when there's no PTR record. This step sees no byte counts
+   at all.
+3. **The split** (`NetworkMonitorEngine.buildUsage`): every second, each
+   host gets `(sockets to that host ÷ all of the app's sockets)` of the
+   app's measured rate, applied the same way to bytes in and bytes out.
+
+What that means in practice:
+
+- A host with 3 of an app's 4 sockets is shown with 75% of its traffic,
+  even if those 3 are idle keep-alives and the 4th is a large download.
+  Treat the numbers as "what is this app mostly talking to", not as a
+  measurement.
+- With a local proxy (Shadowrocket, Clash, Surge…), a browser's sockets
+  mostly go to `127.0.0.1`, so its traffic lands on a row like
+  "本机 · Shadowrocket". The real destinations only appear under the
+  proxy's own app row, split by the proxy's upstream sockets.
+- Per-host totals are kept in memory since launch and aren't saved. A row
+  is dropped once the app has no sockets to that host, and an IP shown
+  before its hostname resolves starts again from zero under the hostname.
+- The socket list refreshes every 3 seconds and the rate every second, so
+  short-lived connections between two `lsof` runs are missed and their
+  bytes are attributed to whatever sockets were seen.
+
+The app also has to run **outside the App Sandbox**: `nettop` and `lsof`
+inspect sockets that belong to other processes, which the sandbox blocks.
+`Sources/NetPulse/Resources/NetPulse.entitlements` turns the sandbox off,
+which rules out the Mac App Store (see [Building](#building)).
 
 ## Building
 
