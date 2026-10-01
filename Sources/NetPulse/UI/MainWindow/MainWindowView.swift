@@ -52,6 +52,11 @@ struct MainWindowView: View {
         // button uses, since the popover itself may never be built.
         .onAppear {
             engine.openMainWindowAction = { [openWindow] in MainWindowOpener.open(using: openWindow) }
+            // The menu bar label normally starts monitoring, but macOS drops
+            // a status item that doesn't fit beside the notch (or that the
+            // user hid in Menu Bar settings), and its label then never
+            // appears to run its task. start() ignores a second call.
+            engine.start()
         }
     }
 }

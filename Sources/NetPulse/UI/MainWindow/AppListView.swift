@@ -67,10 +67,14 @@ struct AppListView: View {
                     } label: {
                         Text(engine.rateWindow.label).font(.system(size: 11.5, weight: .medium))
                     }
-                    .menuStyle(.button)
+                    // A borderless menu on a glass capsule of its own: a
+                    // button-styled menu kept the flat gray bezel.
+                    .menuStyle(.borderlessButton)
                     .menuIndicator(.visible)
                     .fixedSize()
-                    .glassButton()
+                    .padding(.horizontal, 12)
+                    .frame(height: 28)
+                    .glassSurface(in: Capsule(), interactive: true)
                     .help("按这段时间内的平均速率排序")
                 }
             }

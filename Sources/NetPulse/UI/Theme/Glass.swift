@@ -116,8 +116,8 @@ extension View {
         return self
             .background(Theme.contentBackground, in: shape)
             .clipShape(shape)
-            .overlay { shape.stroke(Theme.hairline, lineWidth: 0.5) }
-            .shadow(color: .black.opacity(0.08), radius: 12, y: 3)
+            .overlay { shape.stroke(Color.primary.opacity(0.12), lineWidth: 0.5) }
+            .shadow(color: .black.opacity(0.14), radius: 14, y: 4)
             .padding(.vertical, 8)
             .padding(.trailing, 8)
             .padding(.leading, 2)
