@@ -19,7 +19,7 @@ struct ConnectionsView: View {
                 EmptyPaneMessage(text: "暂无活跃连接")
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 1) {
+                    LazyVStack(spacing: 0) {
                         ForEach(rows) { row in
                             ConnectionRowView(row: row)
                         }
@@ -30,6 +30,7 @@ struct ConnectionsView: View {
         }
         .frame(minWidth: PaneWidth.detailMin - 10, maxWidth: .infinity, maxHeight: .infinity)
         .contentCard()
+        .paneDivider()
     }
 
     private var columnHeader: some View {
@@ -39,12 +40,11 @@ struct ConnectionsView: View {
             Text("实时").frame(width: 110, alignment: .trailing)
             Text("连接").frame(width: 56, alignment: .trailing)
         }
-        .font(.system(size: 10, weight: .semibold))
-        .foregroundStyle(Theme.textTertiary)
-        .textCase(.uppercase)
-        .padding(.horizontal, 22)
-        .padding(.bottom, 6)
-        .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
+        .font(Typo.caption)
+        .foregroundStyle(Theme.textSecondary)
+        .padding(.horizontal, Theme.contentPadding)
+        .frame(height: 28)
+        .overlay(Rectangle().fill(Theme.hairline).frame(height: 0.5), alignment: .bottom)
     }
 }
 
@@ -53,10 +53,10 @@ private struct ConnectionRowView: View {
 
     var body: some View {
         HStack {
-            HStack(spacing: 9) {
-                IconBadge(badge: row.badge, size: 22, cornerRadius: 6, fontSize: 9.5)
+            HStack(spacing: 8) {
+                IconBadge(badge: row.badge, size: 20, cornerRadius: 5, fontSize: 9)
                 Text(row.appName)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(Typo.bodyMedium)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
             }
@@ -64,25 +64,25 @@ private struct ConnectionRowView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.host)
-                    .font(.system(size: 12.5))
+                    .font(Typo.body)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(row.kind).font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
+                Text(row.kind).font(Typo.captionRegular).foregroundStyle(Theme.textTertiary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text("↓ \(Format.rate(row.rateDownKBps))")
+            RateText(Format.rate(row.rateDownKBps), font: Typo.body, color: Theme.textPrimary)
                 .frame(width: 110, alignment: .trailing)
-                .foregroundStyle(Theme.textMuted)
             Text("\(row.connectionCount)")
                 .frame(width: 56, alignment: .trailing)
                 .foregroundStyle(Theme.textSecondary)
         }
-        .font(.system(size: 11.5))
+        .font(Typo.body)
         .monospacedDigit()
-        .padding(.horizontal, 22)
-        .padding(.vertical, 7)
+        .padding(.horizontal, Theme.contentPadding)
+        .frame(height: 40)
+        .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5).padding(.leading, Theme.contentPadding), alignment: .bottom)
     }
 }
 
@@ -96,16 +96,15 @@ struct PaneHeader: View {
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                Text(subtitle).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                Text(title).font(Typo.title).foregroundStyle(Theme.textPrimary)
+                Text(subtitle).font(Typo.captionRegular).foregroundStyle(Theme.textSecondary).monospacedDigit()
             }
             Spacer()
-            Text(note).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+            Text(note).font(Typo.captionRegular).foregroundStyle(Theme.textTertiary)
         }
-        .padding(.horizontal, 22)
-        .frame(height: 52)
+        .padding(.horizontal, Theme.contentPadding)
+        .frame(height: Theme.headerHeight)
         .overlay(Rectangle().fill(Theme.hairline).frame(height: 0.5), alignment: .bottom)
-        .padding(.bottom, 8)
     }
 }
 
@@ -115,7 +114,7 @@ struct EmptyPaneMessage: View {
     var body: some View {
         VStack {
             Spacer()
-            Text(text).font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
+            Text(text).font(Typo.rowTitleRegular).foregroundStyle(Theme.textSecondary)
             Spacer()
         }
         .frame(maxWidth: .infinity)

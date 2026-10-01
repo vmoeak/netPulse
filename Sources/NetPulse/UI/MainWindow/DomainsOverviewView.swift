@@ -12,7 +12,6 @@ struct DomainsOverviewView: View {
 
     var body: some View {
         let rollups = engine.domainRollups
-        let peak = rollups.first?.totalDownKB ?? 0
         return VStack(spacing: 0) {
             PaneHeader(title: "域名总览",
                        subtitle: "\(rollups.count) 个主机 · 跨全部 App 合并",
@@ -22,9 +21,9 @@ struct DomainsOverviewView: View {
                 EmptyPaneMessage(text: "暂无已解析的主机")
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 1) {
+                    LazyVStack(spacing: 0) {
                         ForEach(rollups) { rollup in
-                            DomainRollupRow(rollup: rollup, peakDownKB: peak)
+                            DomainRollupRow(rollup: rollup)
                         }
                     }
                     .padding(.vertical, 4)
@@ -33,6 +32,7 @@ struct DomainsOverviewView: View {
         }
         .frame(minWidth: PaneWidth.detailMin - 10, maxWidth: .infinity, maxHeight: .infinity)
         .contentCard()
+        .paneDivider()
     }
 
     private var columnHeader: some View {
@@ -43,55 +43,44 @@ struct DomainsOverviewView: View {
             Text("累计上传").frame(width: 96, alignment: .trailing)
             Text("连接").frame(width: 56, alignment: .trailing)
         }
-        .font(.system(size: 10, weight: .semibold))
-        .foregroundStyle(Theme.textTertiary)
-        .textCase(.uppercase)
-        .padding(.horizontal, 22)
-        .padding(.bottom, 6)
-        .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
+        .font(Typo.caption)
+        .foregroundStyle(Theme.textSecondary)
+        .padding(.horizontal, Theme.contentPadding)
+        .frame(height: 28)
+        .overlay(Rectangle().fill(Theme.hairline).frame(height: 0.5), alignment: .bottom)
     }
 }
 
 private struct DomainRollupRow: View {
     let rollup: DomainRollup
-    let peakDownKB: Double
 
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 1) {
                 Text(rollup.host)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(Typo.bodyMedium)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(appsLabel).font(.system(size: 10)).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                Text(appsLabel).font(Typo.captionRegular).foregroundStyle(Theme.textTertiary).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text("↓ \(Format.rate(rollup.rateDownKBps))")
+            RateText(Format.rate(rollup.rateDownKBps), font: Typo.body, color: Theme.textPrimary)
                 .frame(width: 104, alignment: .trailing)
-                .foregroundStyle(Theme.textMuted)
-            Text(Format.size(rollup.totalDownKB))
+            RateText(Format.size(rollup.totalDownKB), font: Typo.body, color: Theme.textPrimary)
                 .frame(width: 96, alignment: .trailing)
-                .foregroundStyle(Theme.textPrimary)
-            Text(Format.size(rollup.totalUpKB))
+            RateText(Format.size(rollup.totalUpKB), font: Typo.body, color: Theme.textPrimary)
                 .frame(width: 96, alignment: .trailing)
-                .foregroundStyle(Theme.textSecondary)
             Text("\(rollup.connectionCount)")
                 .frame(width: 56, alignment: .trailing)
                 .foregroundStyle(Theme.textSecondary)
         }
-        .font(.system(size: 11.5))
+        .font(Typo.body)
         .monospacedDigit()
-        .padding(.horizontal, 22)
-        .padding(.vertical, 7)
-        .background(
-            GeometryReader { geo in
-                Rectangle()
-                    .fill(Theme.accentBlue.opacity(0.07))
-                    .frame(width: geo.size.width * min(1, rollup.totalDownKB / max(peakDownKB, 1)))
-            }
-        )
+        .padding(.horizontal, Theme.contentPadding)
+        .frame(height: 40)
+        .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5).padding(.leading, Theme.contentPadding), alignment: .bottom)
     }
 
     /// Naming two apps and counting the rest keeps the row one line wide on a
