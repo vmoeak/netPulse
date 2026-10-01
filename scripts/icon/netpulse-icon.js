@@ -18,7 +18,7 @@
 
   // Body: blue gradient plus the Liquid Glass cues (a soft top sheen and a
   // bright rim that fades toward the bottom).
-  function body(ctx, u, top, bottom) {
+  function body(ctx, u, top, bottom, sheenAlpha = 0.38) {
     const x = 100 * u, s = 824 * u;
     ctx.save();
     ctx.shadowColor = 'rgba(0,0,0,0.28)'; ctx.shadowBlur = 28 * u; ctx.shadowOffsetY = 12 * u;
@@ -34,8 +34,8 @@
     ctx.save();
     squircle(ctx, x, x, s); ctx.clip();
     const sheen = ctx.createRadialGradient(512 * u, 60 * u, 0, 512 * u, 60 * u, 620 * u);
-    sheen.addColorStop(0, 'rgba(255,255,255,0.38)');
-    sheen.addColorStop(0.55, 'rgba(255,255,255,0.06)');
+    sheen.addColorStop(0, `rgba(255,255,255,${sheenAlpha})`);
+    sheen.addColorStop(0.55, `rgba(255,255,255,${sheenAlpha / 6})`);
     sheen.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = sheen; ctx.fillRect(x, x, s, s);
     ctx.restore();
@@ -70,14 +70,22 @@
     slate:  { top: '#5A6A86', bottom: '#2A3348', line: '#FFFFFF', dot: '#E8A08A', shadow: 'rgba(10,15,35,0.35)' },
     plum:   { top: '#5E4466', bottom: '#2B1D33', line: '#F3E6EC', dot: '#D9B26F', shadow: 'rgba(20,0,25,0.40)' },
     ivory:  { top: '#FBF8F2', bottom: '#E4DDD0', line: '#1F2D4D', dot: '#C0974E', shadow: 'rgba(60,45,20,0.18)' },
+    // Quiet ones: low saturation, a thinner trace, a dot in the same family
+    // as the body rather than an accent.
+    mist:     { top: '#FAFAF9', bottom: '#E2E3E1', line: '#3B3E43', dot: '#9AA3AE', shadow: 'rgba(0,0,0,0.08)', w: 40, dotR: 30, sheen: 0.5 },
+    linen:    { top: '#F6F2EB', bottom: '#E0D9CD', line: '#5B524A', dot: '#B09C82', shadow: 'rgba(60,40,20,0.08)', w: 40, dotR: 30, sheen: 0.5 },
+    sage:     { top: '#E3E8E1', bottom: '#C3CDC1', line: '#3E4A41', dot: '#FFFFFF', shadow: 'rgba(20,40,25,0.10)', w: 40, dotR: 30, sheen: 0.4 },
+    fog:      { top: '#CCD5DE', bottom: '#A2AFBD', line: '#FFFFFF', dot: '#56677A', shadow: 'rgba(20,30,45,0.12)', w: 40, dotR: 30, sheen: 0.4 },
+    graphite: { top: '#4B4E53', bottom: '#25272B', line: '#ECECE9', dot: '#8E99A5', shadow: 'rgba(0,0,0,0.30)', w: 40, dotR: 30, sheen: 0.18 },
   };
 
   function pulse(ctx, u, p) {
-    body(ctx, u, p.top, p.bottom);
+    const w = p.w ?? 58, r = p.dotR ?? 44;
+    body(ctx, u, p.top, p.bottom, p.sheen);
     ctx.save();
     ctx.shadowColor = p.shadow; ctx.shadowBlur = 18 * u; ctx.shadowOffsetY = 8 * u;
-    line(ctx, u, [[230, 540], [370, 540], [430, 400], [520, 700], [590, 330], [650, 540], [730, 540]], 58, p.line);
-    ctx.beginPath(); ctx.arc(790 * u, 540 * u, 44 * u, 0, Math.PI * 2);
+    line(ctx, u, [[230, 540], [370, 540], [430, 400], [520, 700], [590, 330], [650, 540], [p.dotR ? 705 : 730, 540]], w, p.line);
+    ctx.beginPath(); ctx.arc(790 * u, 540 * u, r * u, 0, Math.PI * 2);
     ctx.fillStyle = p.dot; ctx.fill();
     ctx.restore();
   }
