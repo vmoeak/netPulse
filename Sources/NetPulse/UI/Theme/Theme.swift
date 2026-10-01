@@ -25,7 +25,7 @@ enum Theme {
 
     /// The one content surface the list and detail share, opaque like a
     /// Finder or System Settings content area: only the sidebar is glass.
-    static let contentSurface = Color(nsColor: .windowBackgroundColor)
+    static let contentSurface = Color(nsColor: .controlBackgroundColor)
     /// Kept for the machine-wide panes, which sit on the same surface.
     static let paneBackground = contentSurface
     static let contentBackground = contentSurface
