@@ -387,6 +387,17 @@ final class NetworkMonitorEngine: ObservableObject {
 
     var topApp: AppUsage? { popoverTop.first?.app }
 
+    /// The whole Mac's 近 10 秒 average, for the popover's footer: beside
+    /// rows averaged over 10 s, an instant total could read lower than one
+    /// of its own apps.
+    var recentTotalKBps: (down: Double, up: Double) {
+        func average(_ history: [Double]) -> Double {
+            let recent = history.suffix(RateWindow.live.seconds)
+            return recent.isEmpty ? 0 : recent.reduce(0, +) / Double(recent.count)
+        }
+        return (average(totalDownHistory), average(totalUpHistory))
+    }
+
     /// 活跃连接: every app's hosts flattened into one machine-wide list,
     /// busiest first.
     var connectionRows: [ConnectionRow] {

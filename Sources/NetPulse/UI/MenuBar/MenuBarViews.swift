@@ -219,7 +219,8 @@ struct MenuBarPopoverView: View {
 
     private var footer: some View {
         HStack {
-            Text("全部合计 ▼ \(Format.rate(engine.totalDownKBps))  ▲ \(Format.rate(engine.totalUpKBps))")
+            let total = engine.recentTotalKBps
+            Text("全部合计 ▼ \(Format.rate(total.down))  ▲ \(Format.rate(total.up))")
             Spacer()
             Button("打开主窗口") { MainWindowOpener.open(using: openWindow) }
             .buttonStyle(.plain)

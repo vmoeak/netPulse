@@ -411,6 +411,8 @@ final class EngineTests: XCTestCase {
         engine.tick()
         XCTAssertEqual(engine.topApp?.id, "proc.steady")
         XCTAssertEqual(engine.popoverTop.map(\.app.id), ["proc.steady", "proc.bursty"])
+        // 500 + 200 KB over the 7 ticks seen; the last second alone was 200.
+        XCTAssertEqual(engine.recentTotalKBps.down, 700.0 / 7.0, accuracy: 0.001)
     }
 
     func testStackAndTopAppsSplitTrafficByApp() throws {
