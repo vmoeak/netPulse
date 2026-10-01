@@ -12,6 +12,7 @@ final class NetworkMonitorEngine: ObservableObject {
     @Published private(set) var apps: [AppUsage] = []
     @Published var selectedAppID: String?
     @Published var sortMode: SortMode = .rate { didSet { resort() } }
+    @Published var rateWindow: RateWindow = .live { didSet { resort() } }
     @Published var range: TimeRange = .today { didSet { resort() } }
     @Published var section: SidebarSection = .apps
     @Published var popoverOpen: Bool = true
@@ -37,6 +38,14 @@ final class NetworkMonitorEngine: ObservableObject {
     private let connections: ConnectionSampler
     private let dns = ReverseDNSResolver()
     private let proxyLog: ProxyLogReader
+    private let hostCapture = ProxyHostCapture()
+    /// Whether the loopback capture daemon is installed (see ProxyHostCapture).
+    @Published private(set) var proxyHostCaptureInstalled = ProxyHostCapture.isInstalled
+    /// Installed, but by an older build whose daemon differs.
+    @Published private(set) var proxyHostCaptureOutdated = false
+    /// Source port of an app's connection to a local proxy → the site it
+    /// asked for, from `hostCapture`, and when that was seen.
+    private var proxyHosts: [Int: (host: String, seen: Date)] = [:]
     private let proxyLogQueue = DispatchQueue(label: "NetPulse.proxyLog", qos: .utility)
     private var proxyLogReadInFlight = false
     private let history: HistoryStore
@@ -68,6 +77,15 @@ final class NetworkMonitorEngine: ObservableObject {
     /// `localhost:<port>` — so a later reverse-DNS answer relabels the row
     /// instead of starting a second one under the new name.
     private var hostTotals: [String: [String: HostTotals]] = [:]
+    /// The last per-connection sample, and what it measured per app and
+    /// endpoint since the one before (see `ingestFlows`).
+    private var previousFlows: [Int32: NettopSampler.Sample] = [:]
+    private var previousFlowsAt: Date?
+    private var flowRates: [String: [String: HostTotals]] = [:]
+    private var flowConns: [String: [String: Int]] = [:]
+    /// Set once nettop has reported connections; from then on hosts are
+    /// measured rather than estimated.
+    private var hasFlowData = false
     /// Apps the user excluded from counting. Persisted, so a pause outlives
     /// the app relaunching (or NetPulse restarting).
     private var pausedIDs: Set<String>
@@ -120,6 +138,9 @@ final class NetworkMonitorEngine: ObservableObject {
             }
         }
         nettop.start()
+        hostCapture.onHosts = { [weak self] hosts in self?.ingestProxyHosts(hosts) }
+        hostCapture.start()
+        proxyHostCaptureOutdated = proxyHostCaptureInstalled && !hostCapture.isCurrent
         connections.start()
         scheduleSelfTestIfRequested()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -172,7 +193,9 @@ final class NetworkMonitorEngine: ObservableObject {
                 "todayDownKB": app.totalDownKB[.today] ?? 0,
                 "todayUpKB": app.totalUpKB[.today] ?? 0,
                 "connections": app.connectionCount,
-                "hosts": app.domains.map(\.host),
+                // Hosts in use now; ones that only keep this launch's
+                // totals don't count.
+                "hosts": app.domains.filter { $0.connectionCount > 0 || $0.rateDownKBps > 0 }.map(\.host),
             ]
         }
         var report: [String: Any] = [
@@ -192,6 +215,7 @@ final class NetworkMonitorEngine: ObservableObject {
         tickTimer = nil
         nettop.stop()
         connections.stop()
+        hostCapture.stop()
         history.saveIfDirty()
     }
 
@@ -221,7 +245,7 @@ final class NetworkMonitorEngine: ObservableObject {
     /// What the app list shows: the live apps, plus under 累计流量 the
     /// archived ones that have traffic in the selected range.
     var listedApps: [AppUsage] {
-        let shown = showIdleApps ? apps : apps.filter { !isIdle($0) }
+        let shown = showIdleApps ? apps : apps.filter { !isIdle($0) || $0.id == selectedAppID }
         guard sortMode == .total else { return shown }
         let liveIDs = Set(apps.map(\.id))
         let archived = archivedApps.filter {
@@ -230,16 +254,101 @@ final class NetworkMonitorEngine: ObservableObject {
         return (shown + archived).sorted(by: comparator(for: sortMode, range: range))
     }
 
-    /// How many rows `listedApps` leaves out because they never moved a byte.
+    /// How many rows `listedApps` leaves out as idle.
     var hiddenIdleCount: Int {
-        showIdleApps ? 0 : apps.filter(isIdle).count
+        showIdleApps ? 0 : apps.filter { isIdle($0) && $0.id != selectedAppID }.count
     }
 
-    /// Never moved a byte, in this launch or any saved day. A paused app
-    /// stays listed: its row is where it gets resumed.
+    /// Below this over the rate window, an app is idle under 实时速率.
+    static let idleRateKBps = 1.0
+
+    /// Under 实时速率: under 1 KB/s over the window, so the list holds only
+    /// what is using the network. Under 累计流量: never moved a byte, in
+    /// this launch or any saved day. A paused app stays listed either way:
+    /// its row is where it gets resumed.
     func isIdle(_ app: AppUsage) -> Bool {
-        !app.isPaused && app.rateDownKBps + app.rateUpKBps == 0
+        guard !app.isPaused else { return false }
+        if sortMode == .rate {
+            return app.windowDownKBps + app.windowUpKBps < Self.idleRateKBps
+                && app.rateDownKBps + app.rateUpKBps < Self.idleRateKBps
+        }
+        return app.rateDownKBps + app.rateUpKBps == 0
             && (app.totalDownKB[.all] ?? 0) + (app.totalUpKB[.all] ?? 0) == 0
+    }
+
+    /// Top of scale for the list's trend lines: the busiest of them, so a
+    /// trickle no longer draws as tall as a download.
+    var trendScaleMax: Double {
+        var peak: Double = 1
+        for app in listedApps {
+            peak = max(peak, app.downHistory.suffix(24).max() ?? 0, app.upHistory.suffix(24).max() ?? 0)
+        }
+        return peak
+    }
+
+    /// The `count` apps that moved the most over `window`, with their
+    /// average rates; for the popover, independent of the list's window.
+    func topApps(over window: RateWindow, count: Int) -> [(app: AppUsage, downKBps: Double, upKBps: Double)] {
+        let span = max(1, min(window.seconds, tickCount))
+        var entries: [(app: AppUsage, downKBps: Double, upKBps: Double)] = []
+        for app in countedApps {
+            let down: Double = app.downHistory.suffix(span).reduce(0, +) / Double(span)
+            let up: Double = app.upHistory.suffix(span).reduce(0, +) / Double(span)
+            if down + up >= Self.idleRateKBps { entries.append((app, down, up)) }
+        }
+        entries.sort { $0.downKBps + $0.upKBps > $1.downKBps + $1.upKBps }
+        return Array(entries.prefix(count))
+    }
+
+    /// One layer of the stacked traffic chart.
+    struct StackLayer: Identifiable {
+        var id: String
+        var name: String
+        /// Down + up KB/s per time bucket, oldest first.
+        var values: [Double]
+    }
+
+    /// The machine's traffic over `rateWindow`, split into the top apps
+    /// plus 其他, averaged into at most `buckets` points. A proxy is left
+    /// out: its bytes are the other apps' again.
+    func stackLayers(top: Int = 5, buckets: Int = 90) -> [StackLayer] {
+        let span = max(2, min(rateWindow.seconds, tickCount))
+        let perBucket = max(1, Int((Double(span) / Double(buckets)).rounded(.up)))
+        func bucketed(_ app: AppUsage) -> [Double] {
+            let down = Array(app.downHistory.suffix(span)), up = Array(app.upHistory.suffix(span))
+            // Apps seen for less than the window are padded with leading zeros.
+            var series = [Double](repeating: 0, count: span - down.count)
+            for i in down.indices {
+                let upValue: Double = i < up.count ? up[i] : 0
+                series.append(down[i] + upValue)
+            }
+            var points: [Double] = []
+            var start = 0
+            while start < series.count {
+                let end = min(start + perBucket, series.count)
+                let sum: Double = series[start..<end].reduce(0, +)
+                points.append(sum / Double(end - start))
+                start = end
+            }
+            return points
+        }
+        var ranked: [(app: AppUsage, series: [Double], total: Double)] = []
+        for app in countedApps {
+            let series = bucketed(app)
+            let total: Double = series.reduce(0, +)
+            if total > 0 { ranked.append((app, series, total)) }
+        }
+        ranked.sort { $0.total > $1.total }
+        var layers = ranked.prefix(top).map { StackLayer(id: $0.app.id, name: $0.app.name, values: $0.series) }
+        let rest = ranked.dropFirst(top)
+        if let first = rest.first {
+            var other = first.series
+            for entry in rest.dropFirst() {
+                for i in other.indices where i < entry.series.count { other[i] += entry.series[i] }
+            }
+            layers.append(StackLayer(id: "__other", name: "其他", values: other))
+        }
+        return layers
     }
 
     var filteredApps: [AppUsage] {
@@ -252,7 +361,9 @@ final class NetworkMonitorEngine: ObservableObject {
     func sortedDomains(of app: AppUsage) -> [DomainUsage] {
         switch sortMode {
         case .rate:
-            return app.domains.sorted { ($0.rateDownKBps, $0.connectionCount) > ($1.rateDownKBps, $1.connectionCount) }
+            return app.domains.sorted {
+                ($0.rateDownKBps, $0.connectionCount, $0.totalDownKB) > ($1.rateDownKBps, $1.connectionCount, $1.totalDownKB)
+            }
         case .total:
             return app.domains.sorted { ($0.totalDownKB, $0.totalUpKB) > ($1.totalDownKB, $1.totalUpKB) }
         }
@@ -267,20 +378,31 @@ final class NetworkMonitorEngine: ObservableObject {
     /// Apps whose traffic is their own, not forwarded for another app.
     private var countedApps: [AppUsage] { apps.filter { !$0.isProxy } }
 
-    var topApp: AppUsage? {
-        countedApps.max(by: { ($0.rateDownKBps + $0.rateUpKBps) < ($1.rateDownKBps + $1.rateUpKBps) })
+    /// The popover's busiest apps, by the same 近 10 秒 average the main
+    /// list ranks by (an instant value put a different app first), idle
+    /// apps left out.
+    var popoverTop: [(app: AppUsage, downKBps: Double, upKBps: Double)] {
+        topApps(over: .live, count: 5)
     }
 
-    var popoverList: [AppUsage] {
-        let sorted = countedApps.sorted { ($0.rateDownKBps + $0.rateUpKBps) > ($1.rateDownKBps + $1.rateUpKBps) }
-        return Array(sorted.dropFirst().prefix(4))
+    var topApp: AppUsage? { popoverTop.first?.app }
+
+    /// The whole Mac's 近 10 秒 average, for the popover's footer: beside
+    /// rows averaged over 10 s, an instant total could read lower than one
+    /// of its own apps.
+    var recentTotalKBps: (down: Double, up: Double) {
+        func average(_ history: [Double]) -> Double {
+            let recent = history.suffix(RateWindow.live.seconds)
+            return recent.isEmpty ? 0 : recent.reduce(0, +) / Double(recent.count)
+        }
+        return (average(totalDownHistory), average(totalUpHistory))
     }
 
     /// 活跃连接: every app's hosts flattened into one machine-wide list,
     /// busiest first.
     var connectionRows: [ConnectionRow] {
         apps.flatMap { app in
-            app.domains.map { domain in
+            app.domains.filter { $0.connectionCount > 0 || $0.rateDownKBps > 0 }.map { domain in
                 ConnectionRow(appID: app.id,
                               appName: app.name,
                               badge: app.badge,
@@ -303,7 +425,8 @@ final class NetworkMonitorEngine: ObservableObject {
         for (appID, hosts) in hostTotals {
             guard let appName = names[appID] else { continue }
             // A proxy's "为 X 转发" rows are apps, not domains.
-            for (key, totals) in hosts where !key.hasPrefix(Self.forwardPrefix) {
+            for (key, totals) in hosts where !key.hasPrefix(Self.forwardPrefix)
+                && key != Self.closedEndpoint && key != Self.unconnectedEndpoint {
                 let (host, kind) = describe(endpoint: key)
                 var rollup = byHost[host] ?? DomainRollup(host: host, kind: kind, rateDownKBps: 0,
                                                           totalDownKB: 0, totalUpKB: 0,
@@ -349,10 +472,14 @@ final class NetworkMonitorEngine: ObservableObject {
         latestConnections = Dictionary(infos.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         latestListeners = snapshot.listeners
         latestLoopbackClients = snapshot.loopbackClients
+        if let flows = snapshot.flows { ingestFlows(flows, at: snapshot.takenAt) }
         // Loopback peers are deliberately not resolved: reverse DNS answers
         // "localhost" for all of them, which is exactly the useless label the
         // listener lookup exists to replace.
-        let seenIPs = Set(infos.flatMap { Array($0.remoteCounts.keys) })
+        resolveHosts(Set(infos.flatMap { Array($0.remoteCounts.keys) }))
+    }
+
+    private func resolveHosts(_ seenIPs: Set<String>) {
         let unresolved = seenIPs.subtracting(resolvedHosts.keys).subtracting(pendingLookups)
         guard !unresolved.isEmpty else { return }
         pendingLookups.formUnion(unresolved)
@@ -424,7 +551,22 @@ final class NetworkMonitorEngine: ObservableObject {
                                           statusHint: identity.statusHint))
         }
 
-        apps = next.values.sorted(by: comparator(for: sortMode, range: range))
+        // Ranks, share bars and rate columns all come from the same numbers,
+        // refreshed together every few seconds: refreshed separately, a row
+        // at 68% could sit below one at 15% until the next re-rank.
+        if listOrder.isEmpty || tickCount % Self.reorderInterval == 0 {
+            apps = ordered(withWindowRates(Array(next.values)))
+        } else {
+            let previous = Dictionary(apps.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            apps = ordered(next.values.map { app in
+                guard let old = previous[app.id] else { return app }
+                var app = app
+                app.windowDownKBps = old.windowDownKBps
+                app.windowUpKBps = old.windowUpKBps
+                app.windowShare = old.windowShare
+                return app
+            })
+        }
         totalDownHistory = Array((totalDownHistory + [totalDownKBps]).suffix(60))
         totalUpHistory = Array((totalUpHistory + [totalUpKBps]).suffix(60))
         if tickCount % 5 == 1 { refreshArchivedApps() }
@@ -454,12 +596,21 @@ final class NetworkMonitorEngine: ObservableObject {
         guard paused || everMoved else { return nil }
         var usage = existing
         usage.isPaused = paused
-        usage.statusLine = paused ? "已暂停统计" : "已退出"
+        // The same word history rows use: whether it quit during this launch
+        // or before it, the app isn't running now.
+        usage.statusLine = paused ? "已暂停统计" : "未运行"
         usage.rateDownKBps = 0
         usage.rateUpKBps = 0
-        usage.downHistory = Array((usage.downHistory + [0]).suffix(60))
-        usage.upHistory = Array((usage.upHistory + [0]).suffix(60))
-        usage.domains = []
+        usage.downHistory = Array((usage.downHistory + [0]).suffix(Self.historyLength))
+        usage.upHistory = Array((usage.upHistory + [0]).suffix(Self.historyLength))
+        // Its hosts stay with what they carried this launch; nothing is open
+        // or moving any more.
+        usage.domains = usage.domains.map { domain in
+            var domain = domain
+            domain.rateDownKBps = 0
+            domain.connectionCount = 0
+            return domain
+        }
         usage.connectionCount = 0
         return usage
     }
@@ -515,7 +666,7 @@ final class NetworkMonitorEngine: ObservableObject {
             var usage = AppUsage(
                 id: id, name: name, bundleID: id,
                 badge: AppPalette.badge(bundleID: id, name: name),
-                connectionCount: 0, statusLine: "本次启动后未运行",
+                connectionCount: 0, statusLine: "未运行",
                 rateDownKBps: 0, rateUpKBps: 0,
                 totalDownKB: [:], totalUpKB: [:],
                 downHistory: [], upHistory: [], domains: [],
@@ -576,6 +727,162 @@ final class NetworkMonitorEngine: ObservableObject {
         var pids: [Int32] = []
     }
 
+    func ingestProxyHosts(_ hosts: [Int: String], at date: Date = Date()) {
+        for (port, host) in hosts { proxyHosts[port] = (host, date) }
+    }
+
+    /// Asks for an administrator password and installs the capture daemon.
+    /// Returns an error message, or nil on success.
+    func installProxyHostCapture() -> String? {
+        let error = hostCapture.install()
+        proxyHostCaptureInstalled = ProxyHostCapture.isInstalled
+        proxyHostCaptureOutdated = proxyHostCaptureInstalled && !hostCapture.isCurrent
+        return error
+    }
+
+    func removeProxyHostCapture() -> String? {
+        let error = hostCapture.uninstall()
+        proxyHostCaptureInstalled = ProxyHostCapture.isInstalled
+        proxyHostCaptureOutdated = proxyHostCaptureInstalled && !hostCapture.isCurrent
+        return error
+    }
+
+    private struct AppFlows {
+        var kb: [String: HostTotals] = [:]
+        var conns: [String: Int] = [:]
+    }
+
+    /// Takes one sample of nettop's per-connection counters: each app's
+    /// bytes since the previous sample go into its hosts' totals, and the
+    /// rate and open connections per host are kept for the rows until the
+    /// next sample.
+    func ingestFlows(_ newFlows: [Int32: NettopSampler.Sample], at date: Date) {
+        let elapsed = previousFlowsAt.map { max(0.5, date.timeIntervalSince($0)) }
+        // Counters only grow while a connection lives, but a sample can show
+        // one lower — a row printed without its counters reads as zero — and
+        // the next sample's full value would then be counted a second time.
+        // So each counter is held at the highest value seen.
+        var flows = newFlows
+        for (pid, sample) in newFlows {
+            guard let old = previousFlows[pid] else { continue }
+            var held = NettopSampler.Sample(pid: pid, command: sample.command,
+                                            bytesInCumKB: max(sample.bytesInCumKB, old.bytesInCumKB),
+                                            bytesOutCumKB: max(sample.bytesOutCumKB, old.bytesOutCumKB))
+            held.connections = sample.connections
+            for (key, conn) in sample.connections {
+                guard let prev = old.connections[key] else { continue }
+                held.connections[key] = NettopSampler.Connection(
+                    remoteHost: conn.remoteHost, remotePort: conn.remotePort,
+                    bytesIn: max(conn.bytesIn, prev.bytesIn), bytesOut: max(conn.bytesOut, prev.bytesOut),
+                    localPort: conn.localPort)
+            }
+            flows[pid] = held
+        }
+        var byApp: [String: AppFlows] = [:]
+        var remoteIPs: Set<String> = []
+        for (pid, sample) in flows {
+            let identity = identify(pid: pid, command: sample.command)
+            guard !pausedIDs.contains(identity.id) else { continue }
+            var flow = byApp[identity.id] ?? AppFlows()
+            // A process first seen after the first sample started since, or
+            // opened its first socket since: its connections' counters all
+            // grew since then (they start at zero). What its process counter
+            // held before that can't be placed, so none of it goes to 已关闭.
+            var previous = previousFlows[pid]
+            if elapsed != nil, previous == nil {
+                let connIn = sample.connections.values.reduce(0) { $0 + $1.bytesIn } / 1024
+                let connOut = sample.connections.values.reduce(0) { $0 + $1.bytesOut } / 1024
+                previous = NettopSampler.Sample(pid: pid, command: sample.command,
+                                                bytesInCumKB: max(0, sample.bytesInCumKB - connIn),
+                                                bytesOutCumKB: max(0, sample.bytesOutCumKB - connOut))
+            }
+            splitByConnection(sample, previous: elapsed == nil ? nil : previous,
+                              appID: identity.id, into: &flow)
+            byApp[identity.id] = flow
+            for conn in sample.connections.values where conn.remoteHost != "*" && !conn.isLoopback {
+                remoteIPs.insert(conn.remoteHost)
+            }
+        }
+        var rates: [String: [String: HostTotals]] = [:]
+        for (appID, flow) in byApp {
+            var totals = hostTotals[appID] ?? [:]
+            var appRates: [String: HostTotals] = [:]
+            for (endpoint, kb) in flow.kb {
+                totals[endpoint, default: HostTotals()].downKB += kb.downKB
+                totals[endpoint, default: HostTotals()].upKB += kb.upKB
+                if let elapsed {
+                    appRates[endpoint] = HostTotals(downKB: kb.downKB / elapsed, upKB: kb.upKB / elapsed)
+                }
+            }
+            hostTotals[appID] = totals
+            rates[appID] = appRates
+        }
+        flowRates = rates
+        flowConns = byApp.mapValues(\.conns)
+        previousFlows = flows
+        previousFlowsAt = date
+        // A port's site is kept while its connection lives; a capture that
+        // lands before nettop first lists the connection gets a minute.
+        var openPorts: Set<Int> = []
+        for sample in flows.values {
+            for conn in sample.connections.values { if let port = conn.localPort { openPorts.insert(port) } }
+        }
+        proxyHosts = proxyHosts.filter { openPorts.contains($0.key) || date.timeIntervalSince($0.value.seen) < 60 }
+        if flows.values.contains(where: { !$0.connections.isEmpty }) { hasFlowData = true }
+        if !remoteIPs.isEmpty { resolveHosts(remoteIPs) }
+    }
+
+    /// Endpoint for bytes whose connection closed between two samples: the
+    /// process's counters include them, but no connection row is left to
+    /// say where they went.
+    private static let closedEndpoint = "closed:"
+    /// Sockets with no fixed peer (mDNS, some UDP senders).
+    private static let unconnectedEndpoint = "unconnected:"
+
+    /// Adds one process's traffic since the previous sample to `flow`, per
+    /// remote endpoint,
+    /// from the growth of each connection's own counters. A connection that
+    /// wasn't there last sample opened since, so all of its bytes are new;
+    /// whatever the process moved beyond its open connections went through
+    /// ones that have already closed.
+    private func splitByConnection(_ sample: NettopSampler.Sample, previous: NettopSampler.Sample?,
+                                   appID: String, into flow: inout AppFlows) {
+        let downKB = max(0, sample.bytesInCumKB - (previous?.bytesInCumKB ?? sample.bytesInCumKB))
+        let upKB = max(0, sample.bytesOutCumKB - (previous?.bytesOutCumKB ?? sample.bytesOutCumKB))
+        var seenDown = 0.0
+        var seenUp = 0.0
+        for (key, conn) in sample.connections {
+            let endpoint: String
+            if conn.remoteHost == "*" {
+                endpoint = Self.unconnectedEndpoint
+            } else if conn.isLoopback, let port = conn.localPort, let site = proxyHosts[port] {
+                // The site this connection asked the local proxy for.
+                endpoint = Self.sitePrefix + site.host
+            } else if conn.isLoopback {
+                endpoint = loopbackEndpoint(port: conn.remotePort ?? 0, appID: appID)
+            } else {
+                endpoint = conn.remoteHost
+            }
+            if conn.remoteHost != "*" { flow.conns[endpoint, default: 0] += 1 }
+            // A process's first sample is only the baseline, as for its totals.
+            guard let previous else { continue }
+            let old = previous.connections[key]
+            let down = max(0, conn.bytesIn - (old?.bytesIn ?? 0)) / 1024
+            let up = max(0, conn.bytesOut - (old?.bytesOut ?? 0)) / 1024
+            guard down > 0 || up > 0 else { continue }
+            flow.kb[endpoint, default: HostTotals()].downKB += down
+            flow.kb[endpoint, default: HostTotals()].upKB += up
+            seenDown += down
+            seenUp += up
+        }
+        guard previous != nil else { return }
+        let restDown = max(0, downKB - seenDown)
+        let restUp = max(0, upKB - seenUp)
+        guard restDown > 0 || restUp > 0 else { return }
+        flow.kb[Self.closedEndpoint, default: HostTotals()].downKB += restDown
+        flow.kb[Self.closedEndpoint, default: HostTotals()].upKB += restUp
+    }
+
     private func buildUsage(id: String, agg: Aggregate) -> AppUsage {
         var usage = apps.first(where: { $0.id == id })
             ?? newUsage(id: id, name: agg.name, bundleID: agg.bundleID, statusHint: agg.statusHint)
@@ -584,58 +891,63 @@ final class NetworkMonitorEngine: ObservableObject {
         usage.isPaused = false
         usage.rateDownKBps = agg.downKBps
         usage.rateUpKBps = agg.upKBps
-        usage.downHistory = Array((usage.downHistory + [agg.downKBps]).suffix(60))
-        usage.upHistory = Array((usage.upHistory + [agg.upKBps]).suffix(60))
+        usage.downHistory = Array((usage.downHistory + [agg.downKBps]).suffix(Self.historyLength))
+        usage.upHistory = Array((usage.upHistory + [agg.upKBps]).suffix(Self.historyLength))
 
-        var hostConnCounts: [String: Int] = [:]
-        var loopbackConnCounts: [String: Int] = [:]
-        for pid in agg.pids {
-            guard let info = latestConnections[pid] else { continue }
-            for (ip, count) in info.remoteCounts {
-                hostConnCounts[ip, default: 0] += count
-            }
-            for (port, count) in info.loopbackCounts {
-                loopbackConnCounts[loopbackEndpoint(port: port, appID: id), default: 0] += count
-            }
-        }
-        usage.connectionCount = hostConnCounts.values.reduce(0, +)
-            + loopbackConnCounts.values.reduce(0, +)
-        let totalConns = max(1, usage.connectionCount)
+        // KB per second and open connections per endpoint: measured over the
+        // last two connection samples when nettop gives them, otherwise the
+        // app's rate split by how many of its lsof connections go to each
+        // endpoint.
+        var tickKB: [String: HostTotals] = [:]
+        var connCounts: [String: Int] = [:]
         var appHostTotals = hostTotals[id] ?? [:]
-
-        func domain(endpoint: String, count: Int) -> DomainUsage {
-            let share = Double(count) / Double(totalConns)
-            var totals = appHostTotals[endpoint] ?? HostTotals()
-            totals.downKB += agg.downKBps * share
-            totals.upKB += agg.upKBps * share
-            appHostTotals[endpoint] = totals
-            let (host, kind) = describe(endpoint: endpoint)
-            return DomainUsage(
-                host: host,
-                kind: kind,
-                rateDownKBps: agg.downKBps * share,
-                totalDownKB: totals.downKB,
-                totalUpKB: totals.upKB,
-                connectionCount: count
-            )
+        if hasFlowData {
+            tickKB = flowRates[id] ?? [:]
+            connCounts = flowConns[id] ?? [:]
+        } else {
+            for pid in agg.pids {
+                guard let info = latestConnections[pid] else { continue }
+                for (ip, count) in info.remoteCounts {
+                    connCounts[ip, default: 0] += count
+                }
+                for (port, count) in info.loopbackCounts {
+                    connCounts[loopbackEndpoint(port: port, appID: id), default: 0] += count
+                }
+            }
+            let totalConns = Double(max(1, connCounts.values.reduce(0, +)))
+            for (endpoint, count) in connCounts {
+                let share = Double(count) / totalConns
+                tickKB[endpoint] = HostTotals(downKB: agg.downKBps * share, upKB: agg.upKBps * share)
+            }
+            // One-second tick, so the rate is also this tick's KB.
+            for (endpoint, kb) in tickKB {
+                appHostTotals[endpoint, default: HostTotals()].downKB += kb.downKB
+                appHostTotals[endpoint, default: HostTotals()].upKB += kb.upKB
+            }
+            hostTotals[id] = appHostTotals
         }
+        usage.connectionCount = connCounts.values.reduce(0, +)
 
-        let remoteDomains = hostConnCounts.map { ip, count in domain(endpoint: ip, count: count) }
-        let loopbackDomains = loopbackConnCounts.map { endpoint, count in
-            domain(endpoint: endpoint, count: count)
-        }
-        hostTotals[id] = appHostTotals
+        // Rows are the endpoints open or moving now, and every one that has
+        // carried traffic this launch: a download's host staying listed
+        // after its connection closes is the point of the breakdown.
         // Several IPs of one service often reverse-resolve to the same name;
         // they are one row, and two rows would share an id in the lists.
+        var byHost: [String: DomainUsage] = [:]
+        var shown = Set(connCounts.keys).union(tickKB.keys)
+        for (endpoint, totals) in appHostTotals where totals.downKB + totals.upKB >= 1 {
+            shown.insert(endpoint)
+        }
+        for endpoint in shown {
+            let (host, kind) = describe(endpoint: endpoint)
+            var row = byHost[host] ?? DomainUsage(host: host, kind: kind, rateDownKBps: 0,
+                                                  totalDownKB: 0, totalUpKB: 0, connectionCount: 0)
+            row.rateDownKBps += tickKB[endpoint]?.downKB ?? 0
+            row.connectionCount += connCounts[endpoint] ?? 0
+            byHost[host] = row
+        }
         // Totals come from every endpoint under that name, including ones
         // with no connection open this tick, so a row's total never dips.
-        var byHost: [String: DomainUsage] = [:]
-        for d in remoteDomains + loopbackDomains {
-            guard var merged = byHost[d.host] else { byHost[d.host] = d; continue }
-            merged.rateDownKBps += d.rateDownKBps
-            merged.connectionCount += d.connectionCount
-            byHost[d.host] = merged
-        }
         var totalsByHost: [String: HostTotals] = [:]
         for (endpoint, totals) in appHostTotals {
             let host = describe(endpoint: endpoint).host
@@ -647,7 +959,9 @@ final class NetworkMonitorEngine: ObservableObject {
             byHost[host]?.totalDownKB = totals.downKB
             byHost[host]?.totalUpKB = totals.upKB
         }
-        usage.domains = byHost.values.sorted { $0.connectionCount > $1.connectionCount }
+        usage.domains = byHost.values
+            .filter { $0.connectionCount > 0 || $0.rateDownKBps > 0 || $0.totalDownKB + $0.totalUpKB >= 1 }
+            .sorted { $0.connectionCount > $1.connectionCount }
 
         refreshTotals(&usage)
         return usage
@@ -676,6 +990,7 @@ final class NetworkMonitorEngine: ObservableObject {
 
     private static let loopbackPrefix = "localhost:"
     private static let forwardPrefix = "forward:"
+    private static let sitePrefix = "site:"
 
     /// Endpoint key for a loopback connection to `port`. Seen from a local
     /// proxy, the far end is some app's ephemeral port — one row per port,
@@ -715,6 +1030,11 @@ final class NetworkMonitorEngine: ObservableObject {
 
     /// Display name and kind for an endpoint key from `hostTotals`.
     private func describe(endpoint: String) -> (host: String, kind: String) {
+        if endpoint.hasPrefix(Self.sitePrefix) {
+            return (String(endpoint.dropFirst(Self.sitePrefix.count)), "经系统代理")
+        }
+        if endpoint == Self.closedEndpoint { return ("已关闭的连接", "连接已结束，无法再分到网站") }
+        if endpoint == Self.unconnectedEndpoint { return ("无固定对端", "广播 / 本地发现") }
         if endpoint.hasPrefix(Self.forwardPrefix) {
             let appID = String(endpoint.dropFirst(Self.forwardPrefix.count))
             // The app's name alone: "为 Google Chrome 转发" got its name
@@ -730,7 +1050,17 @@ final class NetworkMonitorEngine: ObservableObject {
             return (endpoint, loopbackPeerLabel(port: port))
         }
         let host = resolvedHosts[endpoint] ?? endpoint
+        // 198.18.0.0/15 is where TUN-mode proxies (Shadowrocket, Clash, …)
+        // hand out fake addresses, one per domain; the system resolver maps
+        // them back to the domain the app asked for.
+        if Self.isFakeIP(endpoint) {
+            return (host, host == endpoint ? "经 TUN 代理" : "经 TUN 代理 · 已解析")
+        }
         return (host, host == endpoint ? "IP 地址" : "已解析主机")
+    }
+
+    static func isFakeIP(_ ip: String) -> Bool {
+        ip.hasPrefix("198.18.") || ip.hasPrefix("198.19.")
     }
 
     private func loopbackPeerLabel(port: Int) -> String {
@@ -742,8 +1072,55 @@ final class NetworkMonitorEngine: ObservableObject {
         return "本机 · \(peer.name)"
     }
 
+    /// Per-second samples kept per app: enough for the longest RateWindow.
+    static let historyLength = RateWindow.fifteenMinutes.seconds
+
     private func resort() {
-        apps = apps.sorted(by: comparator(for: sortMode, range: range))
+        apps = ordered(withWindowRates(apps), force: true)
+    }
+
+    /// Fills in each app's average over `rateWindow` and its share of all
+    /// apps' traffic in it. A proxy is left out of the shares: its bytes are
+    /// the other apps' again.
+    private func withWindowRates(_ list: [AppUsage]) -> [AppUsage] {
+        // Right after launch a window isn't full yet; average over what
+        // there is, the same for every app.
+        let span = max(1, min(rateWindow.seconds, tickCount))
+        var result = list.map { app -> AppUsage in
+            var app = app
+            app.windowDownKBps = app.downHistory.suffix(span).reduce(0, +) / Double(span)
+            app.windowUpKBps = app.upHistory.suffix(span).reduce(0, +) / Double(span)
+            return app
+        }
+        let total = result.filter { !$0.isProxy }.reduce(0) { $0 + $1.windowDownKBps + $1.windowUpKBps }
+        for i in result.indices {
+            let own = result[i].windowDownKBps + result[i].windowUpKBps
+            result[i].windowShare = result[i].isProxy || total == 0 ? 0 : own / total
+        }
+        return result
+    }
+
+    /// Apps in list order. Under 实时速率 the order is only re-ranked every
+    /// few seconds; in between, rows keep their places and only their
+    /// numbers change, so the list can be read instead of chased.
+    private var listOrder: [String] = []
+    private static let reorderInterval = 3
+
+    private func ordered(_ list: [AppUsage], force: Bool = false) -> [AppUsage] {
+        let ranked = list.sorted(by: comparator(for: sortMode, range: range))
+        if force || sortMode == .total || listOrder.isEmpty || tickCount % Self.reorderInterval == 0 {
+            listOrder = ranked.map(\.id)
+            return ranked
+        }
+        let place = Dictionary(listOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        let kept = ranked.enumerated().sorted { a, b in
+            // New rows go below the ones already placed, in ranked order.
+            let pa = place[a.element.id] ?? Int.max, pb = place[b.element.id] ?? Int.max
+            if a.element.isProxy != b.element.isProxy { return b.element.isProxy }
+            return (pa, a.offset) < (pb, b.offset)
+        }.map(\.element)
+        listOrder = kept.map(\.id)
+        return kept
     }
 
     private func comparator(for sortMode: SortMode, range: TimeRange) -> (AppUsage, AppUsage) -> Bool {
@@ -752,6 +1129,8 @@ final class NetworkMonitorEngine: ObservableObject {
             // it read as the biggest user.
             if lhs.isProxy != rhs.isProxy { return rhs.isProxy }
             if sortMode == .rate {
+                let l = lhs.windowDownKBps + lhs.windowUpKBps, r = rhs.windowDownKBps + rhs.windowUpKBps
+                if l != r { return l > r }
                 return (lhs.rateDownKBps + lhs.rateUpKBps) > (rhs.rateDownKBps + rhs.rateUpKBps)
             }
             let l = (lhs.totalDownKB[range] ?? 0) + (lhs.totalUpKB[range] ?? 0)

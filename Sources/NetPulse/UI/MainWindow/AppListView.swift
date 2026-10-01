@@ -6,13 +6,18 @@ struct AppListView: View {
     @ObservedObject var engine: NetworkMonitorEngine
 
     var body: some View {
+        let trendScale = engine.trendScaleMax
         VStack(spacing: 0) {
             toolbar
+            if engine.sortMode == .rate {
+                TrafficStackChart(layers: engine.stackLayers(), window: engine.rateWindow)
+            }
             columnHeader
             ScrollView {
                 LazyVStack(spacing: 1) {
                     ForEach(engine.filteredApps) { app in
-                        AppRow(app: app, selected: app.id == engine.selectedAppID, sortMode: engine.sortMode, range: engine.range)
+                        AppRow(app: app, selected: app.id == engine.selectedAppID, sortMode: engine.sortMode,
+                               range: engine.range, window: engine.rateWindow, trendScale: trendScale)
                             .contentShape(Rectangle())
                             .onTapGesture { engine.select(appID: app.id) }
                     }
@@ -51,6 +56,16 @@ struct AppListView: View {
             .padding(2)
             .background(Color.black.opacity(0.055))
             .clipShape(RoundedRectangle(cornerRadius: 7))
+
+            if engine.sortMode == .rate {
+                Picker("", selection: $engine.rateWindow) {
+                    ForEach(RateWindow.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+                .help("按这段时间内的平均速率排序")
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: 52)
@@ -75,7 +90,8 @@ struct AppListView: View {
     @ViewBuilder private var idleToggle: some View {
         let hidden = engine.hiddenIdleCount
         if hidden > 0 || engine.showIdleApps {
-            Button(engine.showIdleApps ? "隐藏从未产生流量的进程" : "显示 \(hidden) 个从未产生流量的进程") {
+            let what = engine.sortMode == .rate ? "空闲的 App（低于 1 KB/s）" : "从未产生流量的进程"
+            Button(engine.showIdleApps ? "隐藏\(what)" : "显示 \(hidden) 个\(what)") {
                 engine.showIdleApps.toggle()
             }
             .buttonStyle(.plain)
@@ -89,8 +105,8 @@ struct AppListView: View {
         HStack {
             Text("应用程序").frame(maxWidth: .infinity, alignment: .leading)
             Text("趋势").frame(width: 76, alignment: .trailing)
-            Text(engine.sortMode == .rate ? "下载速率" : "累计下载").frame(width: 84, alignment: .trailing)
-            Text(engine.sortMode == .rate ? "上传速率" : "累计上传").frame(width: 84, alignment: .trailing)
+            Text(rateHeader(down: true)).frame(width: 84, alignment: .trailing)
+            Text(rateHeader(down: false)).frame(width: 84, alignment: .trailing)
         }
         .font(.system(size: 10.5, weight: .semibold))
         .foregroundStyle(Theme.textSecondary)
@@ -99,6 +115,15 @@ struct AppListView: View {
         .padding(.vertical, 7)
         .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
     }
+
+    private func rateHeader(down: Bool) -> String {
+        switch (engine.sortMode, engine.rateWindow) {
+        case (.total, _): return down ? "累计下载" : "累计上传"
+        // Every rate window is an average, 实时 included (10 s), so the
+        // header says so; the sidebar and menu bar show the last second.
+        case (.rate, _): return down ? "平均下载" : "平均上传"
+        }
+    }
 }
 
 private struct AppRow: View {
@@ -106,30 +131,57 @@ private struct AppRow: View {
     let selected: Bool
     let sortMode: SortMode
     let range: TimeRange
+    let window: RateWindow
+    /// Shared top of scale for every row's trend line.
+    let trendScale: Double
+
+    /// The window's average, which is what the list is ranked by: a row
+    /// showing this second's 0 KB/s beside a 19% share read as a bug.
+    private var shownDown: Double { app.windowDownKBps }
+    private var shownUp: Double { app.windowUpKBps }
 
     var body: some View {
         HStack(spacing: 0) {
             IconBadge(badge: app.badge)
             VStack(alignment: .leading, spacing: 1) {
                 Text(app.name).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                Text(app.meta).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                if sortMode == .rate && app.windowShare > 0 {
+                    // Share of all apps' traffic over the window: bar lengths
+                    // compare at a glance where numbers have to be read.
+                    HStack(spacing: 6) {
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.black.opacity(0.06))
+                                Capsule().fill(Theme.accentBlue.opacity(0.75))
+                                    .frame(width: max(2, geo.size.width * app.windowShare))
+                            }
+                        }
+                        .frame(width: 70, height: 4)
+                        Text(app.windowShare < 0.01 ? "<1%" : "\(Int((app.windowShare * 100).rounded()))%")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .frame(height: 13)
+                } else {
+                    Text(app.meta).font(.system(size: 10.5)).foregroundStyle(Theme.textSecondary)
+                }
             }
             .padding(.leading, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
 
             ZStack {
-                Sparkline(values: Array(app.downHistory.suffix(24)))
+                Sparkline(values: Array(app.downHistory.suffix(24)), scaleMax: trendScale)
                     .stroke(Theme.accentBlue, lineWidth: 1.4)
-                Sparkline(values: Array(app.upHistory.suffix(24)))
+                Sparkline(values: Array(app.upHistory.suffix(24)), scaleMax: trendScale)
                     .stroke(Theme.upOrange, lineWidth: 1.2)
             }
             .frame(width: 68, height: 24)
             .frame(width: 76, alignment: .trailing)
 
-            Text(sortMode == .rate ? Format.rate(app.rateDownKBps) : Format.size(app.totalDownKB[range] ?? 0))
+            Text(sortMode == .rate ? Format.rate(shownDown) : Format.size(app.totalDownKB[range] ?? 0))
                 .frame(width: 84, alignment: .trailing)
                 .foregroundStyle(Theme.accentBlue)
-            Text(sortMode == .rate ? Format.rate(app.rateUpKBps) : Format.size(app.totalUpKB[range] ?? 0))
+            Text(sortMode == .rate ? Format.rate(shownUp) : Format.size(app.totalUpKB[range] ?? 0))
                 .frame(width: 84, alignment: .trailing)
                 .foregroundStyle(Theme.upOrangeText)
         }

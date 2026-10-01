@@ -7,11 +7,14 @@ import AppKit
 struct Sparkline: Shape {
     var values: [Double]
     var verticalPadding: CGFloat = 3
+    /// A shared top of scale, so lines drawn side by side compare; nil
+    /// scales to this line's own peak.
+    var scaleMax: Double? = nil
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
         guard values.count > 1 else { return path }
-        let maxValue = max(values.max() ?? 1, 1)
+        let maxValue = max(scaleMax ?? values.max() ?? 1, 1)
         let n = values.count
         let usableHeight = max(0, rect.height - verticalPadding * 2)
         for (i, v) in values.enumerated() {

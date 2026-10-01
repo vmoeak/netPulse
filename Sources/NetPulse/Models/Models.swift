@@ -75,6 +75,27 @@ struct DomainRollup: Identifiable, Equatable {
     var appNames: [String]
 }
 
+/// The span 实时速率 ranks apps over. Ranking on a single second made the
+/// list reshuffle constantly; even 实时 uses a 10-second average.
+enum RateWindow: Int, CaseIterable, Identifiable {
+    case live = 10
+    case oneMinute = 60
+    case fiveMinutes = 300
+    case fifteenMinutes = 900
+
+    var id: Int { rawValue }
+    var seconds: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .live: return "近 10 秒"
+        case .oneMinute: return "近 1 分钟"
+        case .fiveMinutes: return "近 5 分钟"
+        case .fifteenMinutes: return "近 15 分钟"
+        }
+    }
+}
+
 /// App list sort mode (实时速率 / 累计流量).
 enum SortMode {
     case rate, total
@@ -146,6 +167,11 @@ struct AppUsage: Identifiable, Equatable {
     /// A local proxy other apps connect through. What it moves is those
     /// apps' traffic a second time, so machine totals leave it out.
     var isProxy: Bool = false
+    /// Average rates over the chosen `RateWindow`, and this app's share of
+    /// every app's traffic in it (0...1); what 实时速率 ranks by.
+    var windowDownKBps: Double = 0
+    var windowUpKBps: Double = 0
+    var windowShare: Double = 0
 
     var meta: String { isLive ? "\(statusLine) · \(connectionCount) 个连接" : statusLine }
 
@@ -162,5 +188,8 @@ struct AppUsage: Identifiable, Equatable {
             && lhs.isPaused == rhs.isPaused
             && lhs.isLive == rhs.isLive
             && lhs.isProxy == rhs.isProxy
+            && lhs.windowDownKBps == rhs.windowDownKBps
+            && lhs.windowUpKBps == rhs.windowUpKBps
+            && lhs.windowShare == rhs.windowShare
     }
 }

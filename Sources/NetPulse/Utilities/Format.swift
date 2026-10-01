@@ -9,7 +9,8 @@ enum Format {
             return String(format: "%.\(decimals)f MB/s", kbps / 1024)
         }
         if kbps >= 100 { return "\(Int(kbps.rounded())) KB/s" }
-        if kbps < 1 { return "0 KB/s" }
+        // Under 1 KB/s but not idle: "0 KB/s" beside a 6% share read as a bug.
+        if kbps < 1 { return kbps > 0.05 ? "<1 KB/s" : "0 KB/s" }
         return String(format: "%.1f KB/s", kbps)
     }
 

@@ -32,8 +32,8 @@ def main(path: str) -> int:
             failures.append("curl has exited but still shows a live rate")
         if curl["hosts"]:
             failures.append(f"curl has exited but still lists hosts: {curl['hosts']}")
-        if curl["status"] != "已退出":
-            failures.append(f"curl's status line is {curl['status']!r}, expected '已退出'")
+        if curl["status"] != "未运行":
+            failures.append(f"curl's status line is {curl['status']!r}, expected '未运行'")
 
     ui = report.get("ui")
     if ui is not None:
