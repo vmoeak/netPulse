@@ -133,8 +133,8 @@ struct MenuBarPopoverView: View {
                     .layoutPriority(1)
                     Spacer(minLength: 8)
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text("▼ \(Format.rate(top.downKBps))").foregroundStyle(Color(hex: 0x7EC8FF))
-                        Text("▲ \(Format.rate(top.upKBps))").foregroundStyle(Color(hex: 0xFFD479))
+                        RateText("▼ \(Format.rate(top.downKBps))", font: .system(size: 13, weight: .semibold, design: .rounded), unitFont: .system(size: 11, weight: .medium, design: .rounded), color: Color(hex: 0x7EC8FF))
+                        RateText("▲ \(Format.rate(top.upKBps))", font: .system(size: 13, weight: .semibold, design: .rounded), unitFont: .system(size: 11, weight: .medium, design: .rounded), color: Color(hex: 0xFFD479))
                     }
                     .fixedSize()
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -160,11 +160,9 @@ struct MenuBarPopoverView: View {
                         .lineLimit(1).truncationMode(.middle).help(entry.app.name)
                         .layoutPriority(1)
                     Spacer(minLength: 4)
-                    Text("▼ \(Format.rate(entry.downKBps))")
-                        .foregroundStyle(Color(hex: 0x7EC8FF))
+                    RateText("▼ \(Format.rate(entry.downKBps))", font: Typo.body, color: Color(hex: 0x7EC8FF))
                         .frame(width: 74, alignment: .trailing)
-                    Text("▲ \(Format.rate(entry.upKBps))")
-                        .foregroundStyle(Color(hex: 0xFFD479))
+                    RateText("▲ \(Format.rate(entry.upKBps))", font: Typo.body, color: Color(hex: 0xFFD479))
                         .frame(width: 74, alignment: .trailing)
                 }
                 .font(Typo.body)
@@ -195,11 +193,9 @@ struct MenuBarPopoverView: View {
                         .lineLimit(1).truncationMode(.middle).help(entry.app.name)
                         .layoutPriority(1)
                     Spacer(minLength: 4)
-                    Text("▼ \(Format.rate(entry.downKBps))")
-                        .foregroundStyle(Color(hex: 0x7EC8FF))
+                    RateText("▼ \(Format.rate(entry.downKBps))", font: Typo.body, color: Color(hex: 0x7EC8FF))
                         .frame(width: 74, alignment: .trailing)
-                    Text("▲ \(Format.rate(entry.upKBps))")
-                        .foregroundStyle(Color(hex: 0xFFD479))
+                    RateText("▲ \(Format.rate(entry.upKBps))", font: Typo.body, color: Color(hex: 0xFFD479))
                         .frame(width: 74, alignment: .trailing)
                 }
                 .font(Typo.body)
