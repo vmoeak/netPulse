@@ -41,7 +41,8 @@ final class EngineTests: XCTestCase {
                                       identify: { _, command in
                                           ProcessDirectory.Identity(id: "proc." + command, name: command,
                                                                     bundleID: "proc." + command,
-                                                                    statusHint: "后台进程")
+                                                                    statusHint: "后台进程",
+                                                                    isTunnel: command == "MacPacketTunnel")
                                       })
     }
 
@@ -355,6 +356,37 @@ final class EngineTests: XCTestCase {
 
     /// A one-second burst doesn't reorder the list; the window average does,
     /// and only on a re-rank tick.
+    /// Through a VPN the same bytes show twice in nettop: under the app
+    /// that sent them and under the tunnel that carried them.
+    func testVPNTunnelStaysOutOfTotals() throws {
+        let app = try livePID(), tunnel = try livePID()
+        feed(app, "claude", downKB: 0, upKB: 0)
+        feed(tunnel, "MacPacketTunnel", downKB: 0, upKB: 0)
+        engine.tick()
+        feed(app, "claude", downKB: 10, upKB: 500)
+        feed(tunnel, "MacPacketTunnel", downKB: 12, upKB: 520)
+        engine.tick()
+        XCTAssertEqual(engine.totalUpKBps, 500, accuracy: 0.001)
+        XCTAssertEqual(engine.totalDownKBps, 10, accuracy: 0.001)
+        XCTAssertEqual(self.app("proc.MacPacketTunnel")?.isProxy, true)
+        XCTAssertEqual(self.app("proc.MacPacketTunnel")?.statusLine, "VPN 隧道 · 不计入合计")
+        XCTAssertEqual(engine.apps.last?.id, "proc.MacPacketTunnel", "listed after the apps it carries")
+        XCTAssertFalse(engine.stackLayers().contains { $0.id == "proc.MacPacketTunnel" })
+    }
+
+    func testPacketTunnelProvidersAreRecognizedFromTheirInfoPlist() {
+        XCTAssertTrue(ProcessDirectory.declaresPacketTunnel([
+            "NSExtension": ["NSExtensionPointIdentifier": "com.apple.networkextension.packet-tunnel"],
+        ]))
+        XCTAssertTrue(ProcessDirectory.declaresPacketTunnel([
+            "NetworkExtension": ["NEProviderClasses": ["com.apple.networkextension.packet-tunnel": "Provider"]],
+        ]))
+        XCTAssertFalse(ProcessDirectory.declaresPacketTunnel([
+            "NSExtension": ["NSExtensionPointIdentifier": "com.apple.share-services"],
+        ]))
+        XCTAssertFalse(ProcessDirectory.isPacketTunnelProvider(executablePath: "/usr/bin/curl"))
+    }
+
     func testRateRankingUsesTheWindowAndHoldsOrderBetweenReranks() throws {
         let steady = try livePID(), bursty = try livePID()
         var steadyKB = 0.0, burstyKB = 0.0

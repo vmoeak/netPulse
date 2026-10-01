@@ -9,6 +9,9 @@ struct NetPulseApp: App {
             MainWindowView(engine: engine)
         }
         .defaultSize(width: 1280, height: 820)
+        // Content runs to the top edge so the glass sidebar can hold the
+        // traffic lights, as macOS 26's own apps do.
+        .windowStyle(.hiddenTitleBar)
         // WindowGroup's default resizability lets the window be dragged below
         // what its content needs, which clips the panes on both sides instead
         // of compressing them. contentMinSize makes the floor the panes

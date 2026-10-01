@@ -7,7 +7,18 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    # macos-26 builds with the Xcode 26 SDK, which has the Liquid Glass APIs;
+    # its bundle is the one to download. macos-14's older toolchain compiles
+    # only the pre-macOS 26 fallback, which keeps that path building too.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            suffix: ""
+          - runner: macos-14
+            suffix: "-macos14"
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -57,7 +68,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: selftest-snapshots
+          name: selftest-snapshots${{ matrix.suffix }}
           path: selftest-snapshots
           if-no-files-found: warn
 
@@ -73,6 +84,6 @@ jobs:
       - name: Upload NetPulse.app
         uses: actions/upload-artifact@v4
         with:
-          name: NetPulse-app
+          name: NetPulse-app${{ matrix.suffix }}
           path: dist/NetPulse.zip
           if-no-files-found: error

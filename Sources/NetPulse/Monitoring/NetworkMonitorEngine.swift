@@ -65,6 +65,9 @@ final class NetworkMonitorEngine: ObservableObject {
     private var forwardedAppNames: [String: String] = [:]
     /// Apps other apps reach through a loopback listener; set each tick.
     private var proxyAppIDs: Set<String> = []
+    /// VPN packet tunnels seen this launch. Like a local proxy, a tunnel
+    /// carries other apps' bytes a second time, so it is left out of totals.
+    private var tunnelAppIDs: Set<String> = []
     /// Resolved hostnames for remote IPs seen so far.
     private var resolvedHosts: [String: String] = [:]
     /// IPs with a reverse lookup already under way, so an lsof pass that
@@ -510,6 +513,7 @@ final class NetworkMonitorEngine: ObservableObject {
 
         for (pid, sample) in samples {
             let identity = identify(pid: pid, command: sample.command)
+            if identity.isTunnel { tunnelAppIDs.insert(identity.id) }
             guard !pausedIDs.contains(identity.id) else {
                 pausedRunning[identity.id] = identity
                 continue
@@ -634,6 +638,8 @@ final class NetworkMonitorEngine: ObservableObject {
     /// Sites `app` reached through the local proxy, most recent first. A
     /// proxy's own row gets the connections its log can't tie to an app.
     func proxyVisits(of app: AppUsage) -> [ProxyVisit] {
+        // A VPN tunnel isn't the proxy whose log this is.
+        if tunnelAppIDs.contains(app.id) { return [] }
         let products = app.isProxy
             ? [ProxyLogReader.unattributed]
             : ProxyLogReader.products(forAppID: app.id, name: app.name, in: proxyVisitsByProduct.keys)
@@ -886,8 +892,10 @@ final class NetworkMonitorEngine: ObservableObject {
     private func buildUsage(id: String, agg: Aggregate) -> AppUsage {
         var usage = apps.first(where: { $0.id == id })
             ?? newUsage(id: id, name: agg.name, bundleID: agg.bundleID, statusHint: agg.statusHint)
-        usage.isProxy = proxyAppIDs.contains(id)
-        usage.statusLine = usage.isProxy ? "本机代理 · 不计入合计" : agg.statusHint
+        let isTunnel = tunnelAppIDs.contains(id)
+        usage.isProxy = isTunnel || proxyAppIDs.contains(id)
+        usage.statusLine = isTunnel ? "VPN 隧道 · 不计入合计"
+            : usage.isProxy ? "本机代理 · 不计入合计" : agg.statusHint
         usage.isPaused = false
         usage.rateDownKBps = agg.downKBps
         usage.rateUpKBps = agg.upKBps
