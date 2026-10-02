@@ -16,7 +16,7 @@ enum PaneWidth {
 }
 
 /// Root of the main window. 所有 App keeps the design's three-column
-/// 216 / 472 / flexible layout; the other two sidebar sections are
+/// 216 / 472 / flexible layout; the other sidebar sections are
 /// machine-wide lists with no per-app detail to show, so they take the
 /// whole width to the right of the sidebar.
 struct MainWindowView: View {
@@ -34,6 +34,8 @@ struct MainWindowView: View {
                 ConnectionsView(engine: engine)
             case .domains:
                 DomainsOverviewView(engine: engine)
+            case .uploads:
+                UploadsView(inspector: engine.uploads)
             }
         }
         .frame(idealWidth: 1280, idealHeight: 820)

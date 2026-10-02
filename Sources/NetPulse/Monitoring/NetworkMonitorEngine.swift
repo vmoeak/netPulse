@@ -39,6 +39,8 @@ final class NetworkMonitorEngine: ObservableObject {
     private let dns = ReverseDNSResolver()
     private let proxyLog: ProxyLogReader
     private let hostCapture = ProxyHostCapture()
+    /// 上传检查: the opt-in proxy that shows what apps upload.
+    let uploads = UploadInspector()
     /// Whether the loopback capture daemon is installed (see ProxyHostCapture).
     @Published private(set) var proxyHostCaptureInstalled = ProxyHostCapture.isInstalled
     /// Installed, but by an older build whose daemon differs.
@@ -142,6 +144,12 @@ final class NetworkMonitorEngine: ObservableObject {
         hostCapture.start()
         proxyHostCaptureOutdated = proxyHostCaptureInstalled && !hostCapture.isCurrent
         connections.start()
+        // CI's self-test sends a request through it (see build.yml).
+        if ProcessInfo.processInfo.environment["NETPULSE_SELFTEST_INSPECTOR"] != nil {
+            uploads.start(remember: false)
+        } else if uploads.wasEnabled {
+            uploads.start()
+        }
         scheduleSelfTestIfRequested()
         tickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             // Timer's block is `@Sendable`, so the `weak self` capture reads as a
@@ -205,6 +213,8 @@ final class NetworkMonitorEngine: ObservableObject {
             "apps": appRows,
             "domainRollups": domainRollups.map(\.host),
             "archivedApps": archivedApps.map(\.id),
+            "inspector": uploads.selfTestState,
+            "uploads": uploads.selfTestRows,
         ]
         if let ui { report["ui"] = ui }
         return (try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])) ?? Data()
@@ -216,6 +226,7 @@ final class NetworkMonitorEngine: ObservableObject {
         nettop.stop()
         connections.stop()
         hostCapture.stop()
+        uploads.stop(remember: false)
         history.saveIfDirty()
     }
 

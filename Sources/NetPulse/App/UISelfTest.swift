@@ -71,6 +71,17 @@ enum UISelfTest {
             result["e"] = ["app": busiest.name, "rateOrder": byRate, "totalOrder": byTotal] as [String: Any]
         }
 
+        // (f) 上传检查 lists the request CI sent through the inspector, with
+        // its git information picked out.
+        engine.section = .uploads
+        if let upload = engine.uploads.uploads.first(where: \.hasGit) ?? engine.uploads.uploads.first {
+            engine.uploads.selectedID = upload.id
+        }
+        await waitUntil(max(24, seconds - 4))
+        snap("f-uploads")
+        result["f"] = ["uploads": engine.uploads.uploads.count,
+                       "selectedHasGit": engine.uploads.selectedUpload?.hasGit ?? false] as [String: Any]
+
         // (a) The menu bar chip: the image the label draws, and the status
         // bar item as the menu bar actually shows it.
         let chip = MenuBarExtraLabel.chipImage(for: engine)

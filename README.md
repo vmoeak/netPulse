@@ -25,6 +25,42 @@ in the original handoff for the design conversation).
 - **导出报告**: exports the selected app's current domain breakdown as CSV
   via a save panel.
 
+## 上传检查 (upload inspector)
+
+Byte counts and destinations don't say *what* an app sent — the content is
+TLS-encrypted. 上传检查 answers that for apps you choose: it runs an HTTP
+proxy on `127.0.0.1:9696` (the next free port if taken), answers each
+`CONNECT` with a certificate for that site signed by a CA generated on this
+Mac, opens its own verified TLS connection to the real site (through the
+system's HTTPS proxy when one is set, e.g. Shadowrocket), and relays the
+bytes. On the way it reads the app's side as HTTP/1.1 requests and lists
+each one with its headers and body (gzip/deflate decoded, JSON
+pretty-printed). Responses are passed through unread.
+
+Each body is scanned for git information — remote URLs, branch and
+`git status` text (including the `gitStatus:` block coding agents put in
+their prompts), commit hashes, `.git/` file contents, and the name and
+email from your `~/.gitconfig` — plus paths under your home directory, and
+the matches are highlighted.
+
+- Only apps pointed at the proxy are inspected. The pane shows the shell
+  lines to paste (`HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, …)
+  before launching a CLI tool from that terminal; apps that only use the
+  system trust store need the CA trusted in the login keychain (a button
+  does it, and undoes it).
+- The CA and its key live in
+  `~/Library/Application Support/NetPulse/inspector` (0700). Delete the
+  folder to retire it.
+- Apps that pin certificates refuse the connection; they show as 未解密.
+  HTTP/2-only clients and WebSocket frames aren't decoded.
+- Requests are kept in memory only (the last 500), never written to disk
+  unless exported.
+- TLS is SecureTransport (deprecated, TLS 1.2), the one macOS stack that
+  runs over an already-open socket on both sides of a proxy; per-site
+  identities pair a certificate with an in-memory key through
+  Security.framework's `SecIdentityCreate`, so nothing is added to the
+  keychain.
+
 ## Building
 
 Requires Xcode 15+ / macOS 13+ SDK.

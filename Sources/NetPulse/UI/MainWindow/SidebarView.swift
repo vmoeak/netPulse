@@ -6,6 +6,13 @@ import SwiftUI
 /// here; they're the real ones the OS provides for the window.
 struct SidebarView: View {
     @ObservedObject var engine: NetworkMonitorEngine
+    /// Observed apart from the engine, whose own changes don't cover it.
+    @ObservedObject private var uploads: UploadInspector
+
+    init(engine: NetworkMonitorEngine) {
+        _engine = ObservedObject(wrappedValue: engine)
+        _uploads = ObservedObject(wrappedValue: engine.uploads)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,11 +63,12 @@ struct SidebarView: View {
         .overlay(Rectangle().fill(Theme.hairline).frame(width: 0.5), alignment: .trailing)
     }
 
-    private func badgeCount(for section: SidebarSection) -> String {
+    private func badgeCount(for section: SidebarSection) -> String? {
         switch section {
         case .apps: return "\(engine.listedApps.count)"
         case .connections: return "\(engine.connectionCount)"
         case .domains: return "\(engine.domainRollups.count)"
+        case .uploads: return uploads.uploads.isEmpty ? nil : "\(uploads.uploads.count)"
         }
     }
 

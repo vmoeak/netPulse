@@ -28,7 +28,7 @@ enum TimeRange: String, CaseIterable, Identifiable, Hashable {
 
 /// Which of the sidebar's 监控 entries the panes to its right are showing.
 enum SidebarSection: String, CaseIterable, Identifiable {
-    case apps, connections, domains
+    case apps, connections, domains, uploads
 
     var id: String { rawValue }
 
@@ -37,6 +37,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .apps: return "所有 App"
         case .connections: return "活跃连接"
         case .domains: return "域名总览"
+        case .uploads: return "上传检查"
         }
     }
 
@@ -45,6 +46,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .apps: return "square.grid.2x2"
         case .connections: return "point.3.filled.connected.trianglepath.dotted"
         case .domains: return "globe"
+        case .uploads: return "arrow.up.doc"
         }
     }
 }
