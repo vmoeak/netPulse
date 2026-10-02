@@ -64,6 +64,9 @@ struct AppUploadsList: View {
                     .foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 10).padding(.vertical, 6)
             }
+            if inspecting && !inspector.ca.isTrustedInKeychain {
+                TrustPrompt(inspector: inspector)
+            }
             if rows.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(emptyText(inspecting: inspecting))
@@ -111,5 +114,27 @@ struct AppUploadsList: View {
             return "已开启，还没有收到请求。在 App 里操作一下；一直没有的话，它可能是只认系统代理的原生 App，或者固定了证书。"
         }
         return "打开右上角「检查上传内容」，NetPulse 会重启这个 App 并列出它上传的每条请求。"
+    }
+}
+
+/// Asks, right where the 未解密 rows show up, for the one step the switch
+/// leaves to the user: trusting NetPulse's certificate. Only a click here
+/// does it, and macOS asks for the password itself.
+private struct TrustPrompt: View {
+    @ObservedObject var inspector: UploadInspector
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(inspector.trustMessage ?? "NetPulse 证书还没被信任，HTTPS 请求会显示为「未解密」。")
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button("信任证书…") { inspector.trustCertificate() }
+                .controlSize(.small)
+                .help("把 NetPulse 自己生成的证书加入你的钥匙串信任，macOS 会要你输入一次登录密码。随时可以在「上传检查」页取消信任。")
+        }
+        .font(.system(size: 11))
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Color.orange.opacity(0.08))
     }
 }

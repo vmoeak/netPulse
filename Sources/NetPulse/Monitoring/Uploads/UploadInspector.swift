@@ -284,7 +284,7 @@ final class UploadInspector: ObservableObject {
                     try await InspectorRouting.relaunch(bundleID: bundleID, through: port, ca: ca)
                     appMessages[appID] = ca.isTrustedInKeychain
                         ? "已开启，App 新发出的请求会显示在下面"
-                        : "已开启。NetPulse 证书还没被信任，浏览器和 Electron App 的 HTTPS 会显示为「未解密」——需要的话到「上传检查」页点「在钥匙串中信任证书」"
+                        : "已开启。证书信任后，App 新发出的 HTTPS 请求才能解密"
                 } else {
                     try await InspectorRouting.relaunch(bundleID: bundleID, through: nil, ca: ca)
                     appMessages[appID] = "已关闭，App 已恢复直接联网"
