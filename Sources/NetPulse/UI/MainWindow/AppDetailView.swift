@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 struct AppDetailView: View {
     @ObservedObject var engine: NetworkMonitorEngine
     @State private var captureError: String?
+    @State private var showUploads = false
 
     var body: some View {
         Group {
@@ -16,7 +17,13 @@ struct AppDetailView: View {
                     header(app)
                     statGrid(app)
                     throughputSection(app)
-                    domainSection(app)
+                    tabBar(app)
+                    if showUploads {
+                        AppUploadsList(inspector: engine.uploads, app: app)
+                            .padding(.horizontal, Theme.contentPadding)
+                    } else {
+                        domainSection(app)
+                    }
                 }
             } else {
                 VStack(spacing: 8) {
@@ -47,6 +54,7 @@ struct AppDetailView: View {
                     .lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 12)
+            AppInspectSwitch(inspector: engine.uploads, app: app) { on in showUploads = on }
             // Pausing only stops counting; the app's traffic is untouched,
             // which "暂停该 App" did not make clear.
             // A paused app that isn't running still needs a way to resume.
@@ -92,6 +100,21 @@ struct AppDetailView: View {
         .padding(.horizontal, Theme.contentPadding)
         .padding(.vertical, 16)
         .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
+    }
+
+    /// 域名明细, or the requests 检查上传内容 caught for this app.
+    private func tabBar(_ app: AppUsage) -> some View {
+        let count = engine.uploads.uploads(forApp: app.id).count
+        return Picker("", selection: $showUploads) {
+            Text("域名明细").tag(false)
+            Text(count > 0 ? "上传内容 · \(count)" : "上传内容").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .frame(width: 240)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Theme.contentPadding).padding(.bottom, 4)
     }
 
     private var statDivider: some View {

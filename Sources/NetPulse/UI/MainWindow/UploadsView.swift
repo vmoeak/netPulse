@@ -185,7 +185,7 @@ private struct SetupStrip: View {
     }
 }
 
-private struct SnippetBox: View {
+struct SnippetBox: View {
     let text: String
     @State private var copied = false
 
@@ -230,7 +230,7 @@ private struct UploadList: View {
     }
 }
 
-private struct UploadRow: View {
+struct UploadRow: View {
     let upload: CapturedUpload
     let selected: Bool
 
@@ -293,7 +293,7 @@ private struct Tag: View {
     }
 }
 
-private struct UploadDetail: View {
+struct UploadDetail: View {
     let upload: CapturedUpload
     @State private var showHeaders = false
 

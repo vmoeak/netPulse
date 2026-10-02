@@ -6,6 +6,8 @@ struct CapturedUpload: Identifiable {
     let date: Date
     let processName: String
     let pid: Int32?
+    /// The `AppUsage` row the sending process belongs to.
+    let appID: String?
     let scheme: String
     let host: String
     let port: Int
@@ -51,7 +53,7 @@ struct CapturedUpload: Identifiable {
 
     static func make(from event: InspectorEvent, scanner: UploadScanner) -> CapturedUpload {
         guard let request = event.request else {
-            return CapturedUpload(date: event.date, processName: event.processName, pid: event.pid, scheme: event.scheme,
+            return CapturedUpload(date: event.date, processName: event.processName, pid: event.pid, appID: event.appID, scheme: event.scheme,
                                   host: event.host, port: event.port, method: "CONNECT", path: "", headers: [],
                                   bodySize: 0, bodyTruncated: false, rawBody: Data(), bodyText: "", bodyNote: nil,
                                   bodyMatches: [], findings: [], failure: event.failure)
@@ -84,7 +86,7 @@ struct CapturedUpload: Identifiable {
             let cut = "只保留了前 \(Format.bytes(request.body.count))，共 \(Format.bytes(request.bodySize))"
             note = note.map { $0 + " · " + cut } ?? cut
         }
-        return CapturedUpload(date: event.date, processName: event.processName, pid: event.pid, scheme: event.scheme,
+        return CapturedUpload(date: event.date, processName: event.processName, pid: event.pid, appID: event.appID, scheme: event.scheme,
                               host: event.host, port: event.port, method: request.method, path: path,
                               headers: request.headers, bodySize: request.bodySize, bodyTruncated: request.bodyTruncated,
                               rawBody: request.body, bodyText: rendered.text, bodyNote: note,
@@ -189,6 +191,16 @@ final class UploadInspector: ObservableObject {
     }
 
     func stop(remember: Bool = true) {
+        // Apps opened through the proxy would lose the network with it, so
+        // the stop button reopens them plainly first. (Quitting NetPulse
+        // leaves them be; it starts the proxy again on the next launch.)
+        if remember, let port {
+            let ca = self.ca
+            for app in InspectorRouting.routedApps(port: port) {
+                guard let bundleID = app.bundleIdentifier else { continue }
+                Task { @MainActor in try? await InspectorRouting.relaunch(bundleID: bundleID, through: nil, ca: ca) }
+            }
+        }
         proxy.stop()
         if remember { defaults.set(false, forKey: Self.enabledKey) }
         state = .off
@@ -232,6 +244,71 @@ final class UploadInspector: ObservableObject {
             stored -= dropped.rawBody.count + dropped.bodyText.utf8.count
         }
         if selectedID == nil || !uploads.contains(where: { $0.id == selectedID }) { selectedID = upload.id }
+    }
+
+    // MARK: - Per-app switch
+
+    /// Apps being switched on or off right now.
+    @Published private(set) var busyAppIDs: Set<String> = []
+    /// The last thing the switch did or failed at, per app.
+    @Published private(set) var appMessages: [String: String] = [:]
+
+    var port: UInt16? {
+        if case .running(let port) = state { return port }
+        return nil
+    }
+
+    func uploads(forApp appID: String) -> [CapturedUpload] {
+        uploads.filter { $0.appID == appID }
+    }
+
+    func isInspecting(bundleID: String) -> Bool {
+        guard let port else { return false }
+        return InspectorRouting.isRouted(bundleID: bundleID, port: port)
+    }
+
+    /// One switch for 检查上传内容 in an app's detail: starts the proxy and
+    /// reopens the app through it; off reopens it plainly. Trusting the CA
+    /// stays a separate, explicit step on the 上传检查 page — the switch
+    /// never does it on its own.
+    func setInspecting(_ on: Bool, appID: String, bundleID: String) {
+        guard !busyAppIDs.contains(appID) else { return }
+        busyAppIDs.insert(appID)
+        appMessages[appID] = on ? "正在开启…" : "正在关闭…"
+        Task { @MainActor in
+            defer { busyAppIDs.remove(appID) }
+            do {
+                if on {
+                    let port = try await runningPort()
+                    appMessages[appID] = "正在重启 App…"
+                    try await InspectorRouting.relaunch(bundleID: bundleID, through: port, ca: ca)
+                    appMessages[appID] = ca.isTrustedInKeychain
+                        ? "已开启，App 新发出的请求会显示在下面"
+                        : "已开启。NetPulse 证书还没被信任，浏览器和 Electron App 的 HTTPS 会显示为「未解密」——需要的话到「上传检查」页点「在钥匙串中信任证书」"
+                } else {
+                    try await InspectorRouting.relaunch(bundleID: bundleID, through: nil, ca: ca)
+                    appMessages[appID] = "已关闭，App 已恢复直接联网"
+                }
+            } catch {
+                appMessages[appID] = error.localizedDescription
+            }
+        }
+    }
+
+    /// Starts the proxy if needed and waits for its port.
+    private func runningPort() async throws -> UInt16 {
+        switch state {
+        case .off, .failed: start()
+        case .starting, .running: break
+        }
+        for _ in 0..<200 {
+            switch state {
+            case .running(let port): return port
+            case .failed(let message): throw InspectorRouting.Failure(message: "代理启动失败：\(message)")
+            case .off, .starting: try await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+        throw InspectorRouting.Failure(message: "代理启动超时")
     }
 
     /// Shell lines that send a command-line tool's traffic through the

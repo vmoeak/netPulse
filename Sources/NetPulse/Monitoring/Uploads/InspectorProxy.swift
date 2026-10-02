@@ -12,6 +12,8 @@ struct InspectorEvent {
     var scheme: String
     var pid: Int32?
     var processName: String
+    /// `ProcessDirectory` identity of the client, the id `AppUsage` rows use.
+    var appID: String? = nil
     var request: ParsedRequest?
     var failure: String?
 }
@@ -166,7 +168,7 @@ final class InspectorProxy {
         }
     }
 
-    private func intercept(client io: SocketIO, host: String, port: Int, process: (pid: Int32, name: String)?) {
+    private func intercept(client io: SocketIO, host: String, port: Int, process: (pid: Int32, name: String, appID: String)?) {
         let identity: SecIdentity
         do {
             identity = try ca.identity(for: host)
@@ -200,20 +202,20 @@ final class InspectorProxy {
     }
 
     private func relay(client: ByteStream, server: ByteStream, host: String, port: Int, scheme: String,
-                       process: (pid: Int32, name: String)?) {
+                       process: (pid: Int32, name: String, appID: String)?) {
         var parser = HTTPRequestParser()
         Relay.run(client: client, server: server) { bytes in
             guard !parser.isStopped else { return }
             for request in parser.feed(bytes) {
                 onEvent?(InspectorEvent(host: host, port: port, scheme: scheme, pid: process?.pid,
-                                        processName: process?.name ?? "未知进程", request: request))
+                                        processName: process?.name ?? "未知进程", appID: process?.appID, request: request))
             }
         }
     }
 
-    private func report(host: String, port: Int, scheme: String, process: (pid: Int32, name: String)?, failure: String) {
+    private func report(host: String, port: Int, scheme: String, process: (pid: Int32, name: String, appID: String)?, failure: String) {
         onEvent?(InspectorEvent(host: host, port: port, scheme: scheme, pid: process?.pid,
-                                processName: process?.name ?? "未知进程", failure: failure))
+                                processName: process?.name ?? "未知进程", appID: process?.appID, failure: failure))
     }
 
     /// A TCP stream to `host:port`: through the system's HTTPS proxy when
@@ -290,7 +292,7 @@ final class InspectorProxy {
 
     /// The process on the other end of a loopback connection from
     /// `peerPort`, by asking lsof who holds that port (other than us).
-    static func clientProcess(peerPort: Int) -> (pid: Int32, name: String)? {
+    static func clientProcess(peerPort: Int) -> (pid: Int32, name: String, appID: String)? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
         process.arguments = ["-nP", "-iTCP@127.0.0.1:\(peerPort)", "-sTCP:ESTABLISHED", "-Fp"]
@@ -306,7 +308,7 @@ final class InspectorProxy {
             .filter { $0 != me }
         guard let pid = pids.first else { return nil }
         let identity = ProcessDirectory.identify(pid: pid, fallbackCommand: "pid-\(pid)")
-        return (pid, identity.name)
+        return (pid, identity.name, identity.id)
     }
 
     private static func describe(_ status: OSStatus) -> String {
