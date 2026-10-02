@@ -46,6 +46,16 @@ their prompts), commit hashes, `.git/` file contents, and the name and
 email from your `~/.gitconfig` — plus paths under your home directory, and
 the matches are highlighted.
 
+- Each app's detail has a 检查上传内容 switch. Turning it on (after asking)
+  starts the inspector, quits the app and opens it again with Chromium's
+  `--proxy-server` flag plus the proxy and CA in its environment, so only
+  that app goes through the inspector; the detail then lists its requests
+  under 上传内容. Turning it off opens the app again plainly. Native apps
+  that only follow the system proxy ignore both, and command-line tools
+  can't be relaunched (the detail shows the shell lines instead). Browsers
+  and Electron apps also need the CA trusted once from 上传检查. While an
+  app is routed, quitting NetPulse leaves it without a network until
+  NetPulse is back.
 - Only apps pointed at the proxy are inspected. The pane shows the shell
   lines to paste (`HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, …)
   before launching a CLI tool from that terminal; apps that only use the
