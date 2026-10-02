@@ -3,7 +3,8 @@ import SwiftUI
 /// Left nav column: matches lines 86-152 of NetPulse.dc.html — nav items,
 /// the colored-dot time-range picker, and the bottom download/upload
 /// totals with progress bars. Traffic-light window controls aren't drawn
-/// here; they're the real ones the OS provides for the window.
+/// here; they're the real ones the OS provides for the window, and the
+/// sidebar is a floating pane of glass with room left at its top for them.
 struct SidebarView: View {
     @ObservedObject var engine: NetworkMonitorEngine
     /// Observed apart from the engine, whose own changes don't cover it.
@@ -16,7 +17,7 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 sectionLabel("监控")
 
                 ForEach(SidebarSection.allCases) { section in
@@ -28,39 +29,49 @@ struct SidebarView: View {
                         .onTapGesture { engine.section = section }
                 }
 
-                sectionLabel("统计区间").padding(.top, 14)
+                sectionLabel("统计区间").padding(.top, 16)
 
                 ForEach(TimeRange.allCases) { range in
-                    HStack(spacing: 9) {
-                        RangeDot(color: range.dotColor, selected: engine.range == range)
+                    let selected = engine.range == range
+                    HStack(spacing: 8) {
+                        RangeDot(color: range.dotColor, selected: selected)
                         Text(range.label)
-                            .font(.system(size: 13, weight: engine.range == range ? .semibold : .regular))
+                            .font(Typo.rowTitleRegular)
                             .foregroundStyle(Theme.textPrimary)
                     }
-                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(engine.range == range ? Color.black.opacity(0.075) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .background(selected ? Theme.selectionFill : Color.clear,
+                                in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
                     .contentShape(Rectangle())
                     .onTapGesture { engine.range = range }
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 6)
+            .padding(.horizontal, 8)
+            // Clears the traffic lights, which sit on the glass.
+            .padding(.top, 44)
 
             Spacer(minLength: 0)
 
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
                 totalsRow(label: "下载", value: Format.rate(engine.totalDownKBps), valueColor: Theme.accentBlue, barColor: Theme.accentBlue, trackColor: Theme.accentBlue.opacity(0.16), fraction: engine.totalDownPct)
                 totalsRow(label: "上传", value: Format.rate(engine.totalUpKBps), valueColor: Theme.upOrangeTextAlt, barColor: Theme.upOrange, trackColor: Theme.upOrange.opacity(0.16), fraction: engine.totalUpPct)
                 statusLine
             }
-            .padding(14)
-            .overlay(Rectangle().fill(Theme.hairline).frame(height: 0.5), alignment: .top)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            // Set apart by a hairline rather than a filled card, so the
+            // sidebar reads as one pane.
+            .overlay(alignment: .top) {
+                Rectangle().fill(Theme.hairline).frame(height: 0.5).padding(.horizontal, 16)
+            }
         }
-        .frame(width: 216)
-        .background(Theme.sidebarBackground)
-        .overlay(Rectangle().fill(Theme.hairline).frame(width: 0.5), alignment: .trailing)
+        .frame(maxHeight: .infinity)
+        .glassSurface(in: RoundedRectangle(cornerRadius: Theme.panelRadius, style: .continuous))
+        // Floats clear of the window's edges, like the macOS 26 sidebar.
+        .padding(8)
+        .frame(width: PaneWidth.sidebar)
     }
 
     private func badgeCount(for section: SidebarSection) -> String? {
@@ -84,30 +95,30 @@ struct SidebarView: View {
                 Text(message).foregroundStyle(.orange)
             }
         }
-        .font(.system(size: 10.5))
+        .font(Typo.captionRegular)
         .foregroundStyle(Theme.textTertiary)
         .lineLimit(3)
-        .padding(.top, 2)
     }
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(Theme.textSecondary)
+            .font(Typo.caption)
+            .foregroundStyle(Theme.textTertiary)
             .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .padding(.top, 4)
+            .padding(.bottom, 4)
     }
 
     private func totalsRow(label: String, value: String, valueColor: Color, barColor: Color, trackColor: Color, fraction: Double) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .lastTextBaseline) {
-                Text(label).font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(label).font(Typo.caption).foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Text(value).font(.system(size: 15, weight: .semibold)).foregroundStyle(valueColor).monospacedDigit()
+                RateText(value, font: .system(size: 13, weight: .semibold), color: valueColor)
             }
-            MeterBar(fraction: fraction, color: barColor, trackColor: trackColor)
-                .frame(height: 4)
-                .clipShape(RoundedRectangle(cornerRadius: 2))
+            MeterBar(fraction: fraction, color: barColor.opacity(0.85), trackColor: Color.primary.opacity(0.06))
+                .frame(height: 3)
+                .clipShape(Capsule())
         }
     }
 }
@@ -119,23 +130,25 @@ private struct NavRow: View {
     let selected: Bool
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 8) {
             Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: 16, height: 16)
-            Text(title).font(.system(size: 13, weight: selected ? .medium : .regular))
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(selected ? Theme.accentBlue : Theme.textSecondary)
+                .frame(width: 18)
+            Text(title)
+                .font(Typo.rowTitleRegular)
+                .foregroundStyle(Theme.textPrimary)
             Spacer()
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: 11))
+                    .font(Typo.captionRegular)
                     .monospacedDigit()
-                    .foregroundStyle(selected ? .white.opacity(0.8) : Theme.textSecondary)
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
-        .foregroundStyle(selected ? .white : Theme.textPrimary)
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(selected ? Theme.accentBlue : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .frame(height: 28)
+        .background(selected ? Theme.selectionFill : Color.clear,
+                    in: RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous))
     }
 }

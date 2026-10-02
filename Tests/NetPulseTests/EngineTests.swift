@@ -41,7 +41,8 @@ final class EngineTests: XCTestCase {
                                       identify: { _, command in
                                           ProcessDirectory.Identity(id: "proc." + command, name: command,
                                                                     bundleID: "proc." + command,
-                                                                    statusHint: "后台进程")
+                                                                    statusHint: "后台进程",
+                                                                    isTunnel: command == "MacPacketTunnel")
                                       })
     }
 
@@ -119,6 +120,28 @@ final class EngineTests: XCTestCase {
         let site = try XCTUnwrap(app("proc.alpha")?.domains.first { $0.host == "github.com" })
         XCTAssertEqual(site.kind, "经系统代理")
         XCTAssertEqual(site.totalDownKB, 30, accuracy: 0.001)
+    }
+
+    /// lsof run as the user doesn't list root daemons' sockets; nettop's
+    /// connections still name the process on the other end of the port.
+    func testLoopbackPeerSeenOnlyByNettopIsNamed() throws {
+        let server = try livePID(), client = try livePID()
+        func sample(_ kb: Double) -> [Int32: NettopSampler.Sample] {
+            var s = NettopSampler.Sample(pid: server, command: "beta", bytesInCumKB: kb, bytesOutCumKB: 0)
+            s.connections["a"] = NettopSampler.Connection(
+                remoteHost: "127.0.0.1", remotePort: 50568, bytesIn: kb * 1024, bytesOut: 0, localPort: 8080)
+            var c = NettopSampler.Sample(pid: client, command: "beta", bytesInCumKB: 0, bytesOutCumKB: kb)
+            c.connections["b"] = NettopSampler.Connection(
+                remoteHost: "127.0.0.1", remotePort: 8080, bytesIn: 0, bytesOut: kb * 1024, localPort: 50568)
+            return [server: s, client: c]
+        }
+        let start = Date()
+        engine.ingestFlows(sample(10), at: start)
+        engine.ingestFlows(sample(40), at: start.addingTimeInterval(3))
+        feed(server, "beta", downKB: 0)
+        engine.tick()
+        let row = try XCTUnwrap(app("proc.beta")?.domains.first { $0.host == "localhost:50568" })
+        XCTAssertEqual(row.kind, "本机 · beta · PID \(client)")
     }
 
     func testAProcessThatStartsBetweenSamplesIsCountedFromZero() throws {
@@ -355,6 +378,37 @@ final class EngineTests: XCTestCase {
 
     /// A one-second burst doesn't reorder the list; the window average does,
     /// and only on a re-rank tick.
+    /// Through a VPN the same bytes show twice in nettop: under the app
+    /// that sent them and under the tunnel that carried them.
+    func testVPNTunnelStaysOutOfTotals() throws {
+        let app = try livePID(), tunnel = try livePID()
+        feed(app, "claude", downKB: 0, upKB: 0)
+        feed(tunnel, "MacPacketTunnel", downKB: 0, upKB: 0)
+        engine.tick()
+        feed(app, "claude", downKB: 10, upKB: 500)
+        feed(tunnel, "MacPacketTunnel", downKB: 12, upKB: 520)
+        engine.tick()
+        XCTAssertEqual(engine.totalUpKBps, 500, accuracy: 0.001)
+        XCTAssertEqual(engine.totalDownKBps, 10, accuracy: 0.001)
+        XCTAssertEqual(self.app("proc.MacPacketTunnel")?.isProxy, true)
+        XCTAssertEqual(self.app("proc.MacPacketTunnel")?.statusLine, "VPN 隧道 · 不计入合计")
+        XCTAssertEqual(engine.apps.last?.id, "proc.MacPacketTunnel", "listed after the apps it carries")
+        XCTAssertFalse(engine.stackLayers().contains { $0.id == "proc.MacPacketTunnel" })
+    }
+
+    func testPacketTunnelProvidersAreRecognizedFromTheirInfoPlist() {
+        XCTAssertTrue(ProcessDirectory.declaresPacketTunnel([
+            "NSExtension": ["NSExtensionPointIdentifier": "com.apple.networkextension.packet-tunnel"],
+        ]))
+        XCTAssertTrue(ProcessDirectory.declaresPacketTunnel([
+            "NetworkExtension": ["NEProviderClasses": ["com.apple.networkextension.packet-tunnel": "Provider"]],
+        ]))
+        XCTAssertFalse(ProcessDirectory.declaresPacketTunnel([
+            "NSExtension": ["NSExtensionPointIdentifier": "com.apple.share-services"],
+        ]))
+        XCTAssertFalse(ProcessDirectory.isPacketTunnelProvider(executablePath: "/usr/bin/curl"))
+    }
+
     func testRateRankingUsesTheWindowAndHoldsOrderBetweenReranks() throws {
         let steady = try livePID(), bursty = try livePID()
         var steadyKB = 0.0, burstyKB = 0.0

@@ -40,8 +40,9 @@ struct UploadsView: View {
                 if inspector.isRunning { SetupStrip(inspector: inspector) }
             }
         }
-        .frame(minWidth: PaneWidth.detailMin, maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.white)
+        .frame(minWidth: PaneWidth.detailMin - 10, maxWidth: .infinity, maxHeight: .infinity)
+        .contentCard()
+        .paneDivider()
     }
 
     private var subtitle: String {
@@ -77,8 +78,8 @@ struct UploadsView: View {
             }
         }
         .controlSize(.small)
-        .padding(.horizontal, 22)
-        .frame(height: 52)
+        .padding(.horizontal, Theme.contentPadding)
+        .frame(height: Theme.headerHeight)
         .overlay(Rectangle().fill(Theme.hairline).frame(height: 0.5), alignment: .bottom)
     }
 
@@ -203,7 +204,7 @@ private struct SnippetBox: View {
             .controlSize(.small)
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.045)))
+        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.fill))
         .padding(.leading, 26)
     }
 }
@@ -274,7 +275,7 @@ private struct UploadRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(selected ? Theme.accentBlue.opacity(0.12) : Color.clear)
+        .background(selected ? Theme.selectionFill : Color.clear)
         .overlay(Rectangle().fill(Theme.hairlineLight).frame(height: 0.5), alignment: .bottom)
     }
 }
@@ -387,7 +388,7 @@ private struct UploadDetail: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.035)))
+            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.cardFill))
         }
     }
 
@@ -417,13 +418,13 @@ private struct HighlightedText: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
         scroll.drawsBackground = true
-        scroll.backgroundColor = .white
+        scroll.backgroundColor = .controlBackgroundColor
         if let textView = scroll.documentView as? NSTextView {
             textView.isEditable = false
             textView.isSelectable = true
             textView.usesFindBar = true
             textView.isIncrementalSearchingEnabled = true
-            textView.backgroundColor = .white
+            textView.backgroundColor = .controlBackgroundColor
             textView.textContainerInset = NSSize(width: 8, height: 8)
         }
         return scroll
@@ -434,13 +435,13 @@ private struct HighlightedText: NSViewRepresentable {
         context.coordinator.shownID = id
         let font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
         let attributed = NSMutableAttributedString(string: text, attributes: [
-            .font: font, .foregroundColor: NSColor(calibratedWhite: 0.11, alpha: 1),
+            .font: font, .foregroundColor: NSColor.labelColor,
         ])
         let length = attributed.length
         for match in matches where NSMaxRange(match.range) <= length {
             attributed.addAttributes([
                 .backgroundColor: NSColor(match.kind.color).withAlphaComponent(0.22),
-                .foregroundColor: NSColor(calibratedWhite: 0, alpha: 1),
+                .foregroundColor: NSColor.labelColor,
             ], range: match.range)
         }
         textView.textStorage?.setAttributedString(attributed)

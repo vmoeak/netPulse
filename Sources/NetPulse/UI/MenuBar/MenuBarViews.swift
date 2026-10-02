@@ -100,63 +100,51 @@ struct MenuBarPopoverView: View {
         // 360 rather than the design's 340: with two fixed rate columns,
         // 340 left names like QQPCMgrDaemon cut off.
         .frame(width: 360)
-        .foregroundStyle(.white)
-        .background {
-            // The whole card is written white-on-dark, like the design's
-            // menu-bar panel. `.ultraThinMaterial` on its own renders *light*
-            // in Light Appearance, which left white text on a near-white
-            // frosted panel — hence the washed-out look. Tint the material
-            // dark so the panel matches what the content assumes, whichever
-            // appearance the Mac is in.
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(hex: 0x14141A).opacity(0.86))
-            }
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
-        )
-        // Keeps the material (and anything semantic inside) on its dark
-        // variant even when the system is in Light Appearance.
-        .environment(\.colorScheme, .dark)
+        .foregroundStyle(Theme.textPrimary)
+        // Fills the system's popover panel edge to edge, which follows
+        // Light/Dark Appearance like the main window. Near-opaque: through
+        // the panel's clear glass the windows behind refracted into colored
+        // smudges across the rows, reading as a dirty inner shadow.
+        .background(Theme.contentSurface.opacity(0.94))
+        .background(ShadowRefresher())
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("当前占用最高")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.62))
+                    .font(Typo.caption)
+                    .foregroundStyle(Theme.textSecondary)
                 Spacer()
-                Text(RateWindow.live.label).font(.system(size: 11)).foregroundStyle(.white.opacity(0.62))
+                Text(RateWindow.live.label).font(Typo.captionRegular).foregroundStyle(Theme.textTertiary)
             }
             if let top = engine.popoverTop.first {
                 HStack(spacing: 12) {
-                    IconBadge(badge: top.app.badge, size: 38, cornerRadius: 9, fontSize: 15)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(top.app.name).font(.system(size: 14, weight: .semibold))
+                    IconBadge(badge: top.app.badge, size: 36, cornerRadius: 9, fontSize: 14)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(top.app.name).font(Typo.title)
                             .lineLimit(1).truncationMode(.middle).help(top.app.name)
-                        Text(top.app.meta).font(.system(size: 11)).foregroundStyle(.white.opacity(0.62))
+                        Text(top.app.meta).font(Typo.captionRegular).foregroundStyle(Theme.textSecondary)
                             .lineLimit(1)
                     }
                     .layoutPriority(1)
                     Spacer(minLength: 8)
-                    VStack(alignment: .trailing, spacing: 3) {
-                        Text("▼ \(Format.rate(top.downKBps))").foregroundStyle(Color(hex: 0x7EC8FF))
-                        Text("▲ \(Format.rate(top.upKBps))").foregroundStyle(Color(hex: 0xFFD479))
+                    VStack(alignment: .trailing, spacing: 2) {
+                        RateText("▼ \(Format.rate(top.downKBps))", font: .system(size: 13, weight: .semibold, design: .rounded), unitFont: .system(size: 11, weight: .medium, design: .rounded), color: Theme.accentBlue)
+                        RateText("▲ \(Format.rate(top.upKBps))", font: .system(size: 13, weight: .semibold, design: .rounded), unitFont: .system(size: 11, weight: .medium, design: .rounded), color: Theme.upOrangeText)
                     }
                     .fixedSize()
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                 }
+                .padding(12)
+                .background(Theme.cardFill,
+                            in: RoundedRectangle(cornerRadius: Theme.cardRadius + 2, style: .continuous))
             } else {
-                Text("暂无数据").font(.system(size: 12)).foregroundStyle(.white.opacity(0.62))
+                Text("暂无数据").font(Typo.body).foregroundStyle(Theme.textSecondary)
             }
         }
-        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
+        .padding(.horizontal, 12).padding(.top, 14).padding(.bottom, 12)
     }
 
     private var list: some View {
@@ -165,23 +153,22 @@ struct MenuBarPopoverView: View {
             ForEach(engine.popoverTop.dropFirst(), id: \.app.id) { entry in
                 HStack(spacing: 10) {
                     IconBadge(badge: entry.app.badge, size: 20, cornerRadius: 5, fontSize: 9)
-                    Text(entry.app.name).font(.system(size: 12.5)).foregroundStyle(.white.opacity(0.94))
+                    Text(entry.app.name).font(Typo.body).foregroundStyle(Theme.textPrimary)
                         .lineLimit(1).truncationMode(.middle).help(entry.app.name)
                         .layoutPriority(1)
                     Spacer(minLength: 4)
-                    Text("▼ \(Format.rate(entry.downKBps))")
-                        .foregroundStyle(Color(hex: 0x7EC8FF))
+                    RateText("▼ \(Format.rate(entry.downKBps))", font: Typo.body, color: Theme.accentBlue)
                         .frame(width: 74, alignment: .trailing)
-                    Text("▲ \(Format.rate(entry.upKBps))")
-                        .foregroundStyle(Color(hex: 0xFFD479))
+                    RateText("▲ \(Format.rate(entry.upKBps))", font: Typo.body, color: Theme.upOrangeText)
                         .frame(width: 74, alignment: .trailing)
                 }
-                .font(.system(size: 11.5))
+                .font(Typo.body)
                 .monospacedDigit()
-                .padding(.horizontal, 8).padding(.vertical, 6)
+                .padding(.horizontal, 8)
+                .frame(height: 28)
             }
         }
-        .padding(8)
+        .padding(.horizontal, 8).padding(.vertical, 4)
     }
 
     /// Who used the most over the last five minutes, which the live list
@@ -190,31 +177,30 @@ struct MenuBarPopoverView: View {
         let top = engine.topApps(over: .fiveMinutes, count: 3)
         return VStack(alignment: .leading, spacing: 6) {
             Text("近 5 分钟占用最多")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.62))
+                .font(Typo.caption)
+                .foregroundStyle(Theme.textSecondary)
             if top.isEmpty {
-                Text("这段时间没有明显流量").font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.5))
+                Text("这段时间没有明显流量").font(Typo.body).foregroundStyle(Theme.textTertiary)
             }
             ForEach(Array(top.enumerated()), id: \.element.app.id) { index, entry in
                 HStack(spacing: 8) {
-                    Text("\(index + 1)").foregroundStyle(.white.opacity(0.5)).frame(width: 12)
+                    Text("\(index + 1)").foregroundStyle(Theme.textTertiary).frame(width: 12)
                     IconBadge(badge: entry.app.badge, size: 18, cornerRadius: 5, fontSize: 8)
-                    Text(entry.app.name).foregroundStyle(.white.opacity(0.94))
+                    Text(entry.app.name).foregroundStyle(Theme.textPrimary)
                         .lineLimit(1).truncationMode(.middle).help(entry.app.name)
                         .layoutPriority(1)
                     Spacer(minLength: 4)
-                    Text("▼ \(Format.rate(entry.downKBps))")
-                        .foregroundStyle(Color(hex: 0x7EC8FF))
+                    RateText("▼ \(Format.rate(entry.downKBps))", font: Typo.body, color: Theme.accentBlue)
                         .frame(width: 74, alignment: .trailing)
-                    Text("▲ \(Format.rate(entry.upKBps))")
-                        .foregroundStyle(Color(hex: 0xFFD479))
+                    RateText("▲ \(Format.rate(entry.upKBps))", font: Typo.body, color: Theme.upOrangeText)
                         .frame(width: 74, alignment: .trailing)
                 }
-                .font(.system(size: 11.5))
+                .font(Typo.body)
                 .monospacedDigit()
+                .frame(height: 24)
             }
         }
-        .padding(.horizontal, 16).padding(.vertical, 10)
+        .padding(.horizontal, 16).padding(.vertical, 12)
     }
 
     private var footer: some View {
@@ -223,14 +209,37 @@ struct MenuBarPopoverView: View {
             Text("近 10 秒合计 ▼ \(Format.rate(total.down))  ▲ \(Format.rate(total.up))")
             Spacer()
             Button("打开主窗口") { MainWindowOpener.open(using: openWindow) }
-            .buttonStyle(.plain)
+                .glassButton()
+                .controlSize(.small)
         }
-        .font(.system(size: 11.5))
-        .foregroundStyle(.white.opacity(0.72))
+        .font(Typo.captionRegular)
+        .monospacedDigit()
+        .foregroundStyle(Theme.textSecondary)
         .padding(.horizontal, 16).padding(.vertical, 10)
     }
 
     private var hairline: some View {
-        Rectangle().fill(Color.white.opacity(0.14)).frame(height: 0.5)
+        Rectangle().fill(Theme.hairline).frame(height: 0.5).padding(.horizontal, 16)
+    }
+}
+
+
+/// The popover grows and shrinks as apps enter and leave its lists, and the
+/// panel kept the shadow it computed for its first size, offset from its
+/// real edges. Recomputes it whenever the content's size changes.
+private struct ShadowRefresher: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { ShadowRefreshView() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class ShadowRefreshView: NSView {
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            DispatchQueue.main.async { [weak self] in self?.window?.invalidateShadow() }
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.invalidateShadow()
+        }
     }
 }

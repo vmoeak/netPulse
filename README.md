@@ -9,6 +9,9 @@ in the original handoff for the design conversation).
 - **Per-app rates & totals**: real, sampled every second from `nettop -P`.
 - **Week/month/all-time rollups**: real, persisted to
   `~/Library/Application Support/NetPulse/history.json` day-by-day.
+  Per-host bytes are kept the same way, one file per day under
+  `~/Library/Application Support/NetPulse/hosts/`, so the detail pane's
+  域名明细 and 域名总览 follow the selected range like the app totals.
 - **Domain / host breakdown**: connections are real (via `lsof -i`, reverse-
   DNS resolved and cached). On a Mac running a local proxy most of a
   browser's sockets terminate at 127.0.0.1 and the real destination is known
@@ -81,8 +84,11 @@ local distribution works fine.
 
 ## CI
 
-`.github/workflows/build.yml` builds on a `macos-14` GitHub Actions runner
-on every push and uploads `NetPulse.app` as a build artifact — useful for
+`.github/workflows/build.yml` builds on `macos-26` and `macos-14` GitHub
+Actions runners on every push. The `macos-26` build uses the Xcode 26 SDK and
+so draws the interface in Liquid Glass on macOS 26; `macos-14` keeps the
+frosted-material fallback for older macOS compiling. Each uploads
+`NetPulse.app` as a build artifact (`NetPulse-app` is the macOS 26 one) — useful for
 catching compile errors even without a local Mac.
 
 The bundle is zipped with `ditto` before upload so it survives the trip
@@ -108,8 +114,9 @@ open NetPulse.app
   bytes_in,bytes_out` in Terminal and adjust `parse(line:)` to match.
 - `nettop` may prompt for permission the first time it runs, or require the
   app to be run as an admin user, depending on macOS version.
-- The app icon is drawn by `scripts/make-icon.py` into
-  `Sources/NetPulse/Resources/AppIcon.png`; `build-app.sh` turns that into
-  `NetPulse.icns` with `sips`/`iconutil` at package time. Edit the script,
-  not the PNG. macOS caches Dock icons aggressively — `killall Dock` if a
+- The app icon is drawn on a canvas by `scripts/icon/netpulse-icon.js`;
+  `node scripts/icon/make-icon.mjs` renders every size into
+  `Sources/NetPulse/Resources/AppIcon.iconset`, and `build-app.sh` packs that
+  into `NetPulse.icns` with `iconutil`. Edit the script, not the PNGs. macOS
+  caches Dock icons aggressively — `killall Dock` if a
   rebuilt bundle still shows the old one.
