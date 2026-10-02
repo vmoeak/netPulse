@@ -152,7 +152,7 @@ final class InspectorProxy {
             }
             let port = url.port ?? 80
             let upstream: SocketIO?
-            if let proxy = Self.systemProxy(https: false, excludingPort: self.port) {
+            if let proxy = Self.systemProxy(https: false, excludingPort: self.port, for: host) {
                 upstream = SocketIO.connect(host: proxy.host, port: proxy.port)
             } else {
                 upstream = SocketIO.connect(host: host, port: port)
@@ -220,9 +220,10 @@ final class InspectorProxy {
 
     /// A TCP stream to `host:port`: through the system's HTTPS proxy when
     /// one is set (so sites only reachable through it still work), else
-    /// direct.
+    /// direct. Private addresses and the proxy's own exceptions go direct,
+    /// as the app would have without the inspector.
     private func openTunnel(host: String, port: Int) -> SocketIO? {
-        guard let proxy = Self.systemProxy(https: true, excludingPort: self.port) else {
+        guard let proxy = Self.systemProxy(https: true, excludingPort: self.port, for: host) else {
             return SocketIO.connect(host: host, port: port)
         }
         guard let io = SocketIO.connect(host: proxy.host, port: proxy.port) else { return nil }
@@ -278,8 +279,9 @@ final class InspectorProxy {
         return (host.lowercased(), port)
     }
 
-    /// The system's HTTP(S) proxy, unless it is this inspector itself.
-    static func systemProxy(https: Bool, excludingPort ownPort: UInt16) -> (host: String, port: Int)? {
+    /// The system's HTTP(S) proxy for reaching `target`, unless it is this
+    /// inspector itself or the system would reach `target` directly.
+    static func systemProxy(https: Bool, excludingPort ownPort: UInt16, for target: String) -> (host: String, port: Int)? {
         guard let settings = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any] else { return nil }
         let prefix = https ? "HTTPS" : "HTTP"
         guard (settings[prefix + "Enable"] as? Int) == 1,
@@ -287,7 +289,66 @@ final class InspectorProxy {
               let port = settings[prefix + "Port"] as? Int else { return nil }
         let loopback = ["127.0.0.1", "localhost", "::1"].contains(host.lowercased())
         if loopback && port == Int(ownPort) { return nil }
+        if bypassesProxy(target, exceptions: settings["ExceptionsList"] as? [String] ?? [],
+                         excludeSimpleHostnames: (settings["ExcludeSimpleHostnames"] as? Int) == 1) {
+            return nil
+        }
         return (host, port)
+    }
+
+    /// Whether `host` should be reached without the system proxy: local and
+    /// private-network addresses (a company server behind a VPN, say,
+    /// which a proxy such as Shadowrocket can't reach), and the hosts
+    /// listed under "Bypass proxy settings for these hosts".
+    static func bypassesProxy(_ host: String, exceptions: [String], excludeSimpleHostnames: Bool) -> Bool {
+        let host = host.lowercased()
+        if host == "localhost" || host.hasSuffix(".local") { return true }
+        if excludeSimpleHostnames && !host.contains(".") && !host.contains(":") { return true }
+        let v4 = ipv4(host)
+        if let v4 {
+            let privateRanges: [(UInt32, Int)] = [(0x0A00_0000, 8), (0xAC10_0000, 12), (0xC0A8_0000, 16),
+                                                  (0x7F00_0000, 8), (0xA9FE_0000, 16), (0x6440_0000, 10)]
+            if privateRanges.contains(where: { inRange(v4, $0.0, $0.1) }) { return true }
+        } else if host.contains(":") {
+            if host == "::1" || host.hasPrefix("fe80:") || host.hasPrefix("fc") || host.hasPrefix("fd") { return true }
+        }
+        for rule in exceptions.map({ $0.lowercased().trimmingCharacters(in: .whitespaces) }) where !rule.isEmpty {
+            if let slash = rule.firstIndex(of: "/"), let v4 {
+                // "192.168/16", "10.0.0.0/8": macOS lets trailing octets go.
+                var octets = rule[..<slash].split(separator: ".").compactMap { UInt32($0) }
+                guard let bits = Int(rule[rule.index(after: slash)...]), (0...32).contains(bits),
+                      (1...4).contains(octets.count) else { continue }
+                while octets.count < 4 { octets.append(0) }
+                if inRange(v4, octets.reduce(0) { $0 << 8 | ($1 & 0xFF) }, bits) { return true }
+            } else if rule.hasPrefix("*.") {
+                let suffix = rule.dropFirst(1)
+                if host.hasSuffix(suffix) || host == rule.dropFirst(2) { return true }
+            } else if rule.hasPrefix(".") {
+                if host.hasSuffix(rule) || host == rule.dropFirst() { return true }
+            } else if rule.contains("*") {
+                let pattern = "^" + NSRegularExpression.escapedPattern(for: rule).replacingOccurrences(of: "\\*", with: ".*") + "$"
+                if host.range(of: pattern, options: .regularExpression) != nil { return true }
+            } else if host == rule {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func ipv4(_ host: String) -> UInt32? {
+        let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4 else { return nil }
+        var value: UInt32 = 0
+        for part in parts {
+            guard let octet = UInt8(part) else { return nil }
+            value = value << 8 | UInt32(octet)
+        }
+        return value
+    }
+
+    private static func inRange(_ address: UInt32, _ network: UInt32, _ bits: Int) -> Bool {
+        let mask: UInt32 = bits == 0 ? 0 : ~UInt32(0) << (32 - bits)
+        return address & mask == network & mask
     }
 
     /// The process on the other end of a loopback connection from

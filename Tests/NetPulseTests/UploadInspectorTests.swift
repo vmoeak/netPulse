@@ -58,6 +58,20 @@ final class UploadInspectorTests: XCTestCase {
         XCTAssertNil(InspectorProxy.splitHostPort("example.com:http", defaultPort: 443))
     }
 
+    func testPrivateAndExceptedHostsSkipTheSystemProxy() {
+        let exceptions = ["*.corp.example", "192.168/16", "intranet", "*.local", "169.254/16"]
+        for host in ["172.24.86.253", "10.1.2.3", "192.168.5.5", "127.0.0.1", "100.64.0.9", "::1", "fd00::1",
+                     "printer.local", "wiki.corp.example", "intranet", "localhost"] {
+            XCTAssertTrue(InspectorProxy.bypassesProxy(host, exceptions: exceptions, excludeSimpleHostnames: false), host)
+        }
+        for host in ["api.anthropic.com", "172.32.0.1", "8.8.8.8", "corp.example.com", "intranet.example.com"] {
+            XCTAssertFalse(InspectorProxy.bypassesProxy(host, exceptions: exceptions, excludeSimpleHostnames: false), host)
+        }
+        XCTAssertTrue(InspectorProxy.bypassesProxy("nas", exceptions: [], excludeSimpleHostnames: true))
+        XCTAssertFalse(InspectorProxy.bypassesProxy("nas", exceptions: [], excludeSimpleHostnames: false))
+        XCTAssertTrue(InspectorProxy.bypassesProxy("203.0.113.7", exceptions: ["203.0.113.0/24"], excludeSimpleHostnames: false))
+    }
+
     // MARK: - Finding git information
 
     private let scanner = UploadScanner(identity: GitIdentity(names: ["Ada Lovelace"], emails: ["ada@example.org"]),
