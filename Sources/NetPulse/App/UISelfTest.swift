@@ -25,6 +25,48 @@ enum UISelfTest {
             snapshots += snapshotMainWindows(named: name, into: outputDir)
         }
 
+        // (g) 检查上传内容 for one app, when `NETPULSE_SELFTEST_ROUTE_BUNDLE`
+        // names an installed app: the switch reopens it through the proxy,
+        // its requests are attributed to it, and switching off reopens it
+        // plainly. Off by default — it quits and opens a real app.
+        if let bundleID = ProcessInfo.processInfo.environment["NETPULSE_SELFTEST_ROUTE_BUNDLE"] {
+            let inspector = engine.uploads
+            inspector.setInspecting(true, appID: bundleID, bundleID: bundleID)
+            for _ in 0..<100 where inspector.busyAppIDs.contains(bundleID) {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            let routedPID = InspectorRouting.runningApp(bundleID: bundleID)?.processIdentifier
+            let args = routedPID.map(InspectorRouting.arguments(of:)) ?? []
+            let routedOn = inspector.isInspecting(bundleID: bundleID)
+            let messageOn = inspector.appMessages[bundleID] ?? ""
+            engine.section = .apps
+            // Long enough for the app to start up and talk to its servers.
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            engine.select(appID: bundleID)
+            snap("g1-app-inspecting")
+            let routedAtSnap = inspector.isInspecting(bundleID: bundleID)
+            let caught = inspector.uploads(forApp: bundleID)
+            inspector.setInspecting(false, appID: bundleID, bundleID: bundleID)
+            for _ in 0..<100 where inspector.busyAppIDs.contains(bundleID) {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            result["g"] = [
+                "bundleID": bundleID,
+                "routedOn": routedOn,
+                "routedAtSnap": routedAtSnap,
+                "messageOn": messageOn,
+                "launchArgs": args,
+                "caught": caught.count,
+                "caughtDecrypted": caught.filter { $0.failure == nil }.count,
+                "caughtHosts": Array(Set(caught.map(\.host))).sorted(),
+                "allUploads": inspector.uploads.count,
+                "allUploadApps": Array(Set(inspector.uploads.compactMap(\.appID))).sorted(),
+                "routedAfterOff": inspector.isInspecting(bundleID: bundleID),
+                "messageOff": inspector.appMessages[bundleID] ?? "",
+            ] as [String: Any]
+        }
+
         // (b) 打开主窗口 twice must leave one main window, not three.
         await waitUntil(3)
         let before = MainWindowOpener.shownMainWindows.count
@@ -70,6 +112,17 @@ enum UISelfTest {
             snap("e2-detail-by-total")
             result["e"] = ["app": busiest.name, "rateOrder": byRate, "totalOrder": byTotal] as [String: Any]
         }
+
+        // (f) 上传检查 lists the request CI sent through the inspector, with
+        // its git information picked out.
+        engine.section = .uploads
+        if let upload = engine.uploads.uploads.first(where: \.hasGit) ?? engine.uploads.uploads.first {
+            engine.uploads.selectedID = upload.id
+        }
+        await waitUntil(max(24, seconds - 4))
+        snap("f-uploads")
+        result["f"] = ["uploads": engine.uploads.uploads.count,
+                       "selectedHasGit": engine.uploads.selectedUpload?.hasGit ?? false] as [String: Any]
 
         // (a) The menu bar chip: the image the label draws, and the status
         // bar item as the menu bar actually shows it.

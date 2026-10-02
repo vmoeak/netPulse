@@ -45,9 +45,16 @@ jobs:
       # traffic, then checks the app counted it and dropped curl's rate and
       # hosts once curl exited. perl's alarm is the watchdog (macOS has no
       # `timeout`), so an app that never reports fails instead of hanging.
+      #
+      # Alongside the download, a second curl POSTs a body carrying git
+      # information through the upload inspector, trusting its CA, so the
+      # whole path (CONNECT, NetPulse's certificate, TLS to the real site,
+      # the request read on the way) runs for real; the report must list it
+      # with the git information found.
       - name: Smoke test the app
         run: |
           NETPULSE_SELFTEST_SECONDS=30 NETPULSE_SELFTEST_SNAPSHOTS="$PWD/selftest-snapshots" \
+            NETPULSE_SELFTEST_INSPECTOR=1 \
             perl -e 'alarm 90; exec @ARGV' \
             dist/NetPulse.app/Contents/MacOS/NetPulse > selftest.json &
           APP=$!
@@ -55,9 +62,24 @@ jobs:
           # check shows what nettop actually printed for curl.
           perl -e 'alarm 40; exec @ARGV' script -q /dev/null nettop -P -x -l 0 -s 1 -J bytes_in,bytes_out > nettop.log 2>&1 &
           sleep 5
+          CA="$HOME/Library/Application Support/NetPulse/inspector/ca.pem"
+          for i in $(seq 1 20); do
+            [ -f "$CA" ] && nc -z 127.0.0.1 9696 2>/dev/null && break
+            sleep 0.5
+          done
+          curl -sS --max-time 10 --proxy http://127.0.0.1:9696 --cacert "$CA" \
+            -H 'Content-Type: application/json' \
+            --data '{"context":"gitStatus: Current branch: main\nOn branch main","origin":"git@github.com:octocat/hello-world.git"}' \
+            -o upload-echo.json -w 'inspector curl: HTTP %{http_code}\n' https://postman-echo.com/post \
+            > inspector-curl.log 2>&1 &
+          UPLOAD=$!
           curl -sSL --limit-rate 300k --max-time 10 -o /dev/null \
             https://download.swift.org/swift-5.10-release/xcode/swift-5.10-RELEASE/swift-5.10-RELEASE-osx.pkg || true
+          UPLOAD_OK=1
+          wait $UPLOAD || UPLOAD_OK=0
           wait $APP
+          echo "--- upload through the inspector ---"; cat inspector-curl.log; head -c 600 upload-echo.json || true; echo
+          if [ "$UPLOAD_OK" != 1 ]; then echo "FAIL: curl through the upload inspector failed"; exit 1; fi
           if ! python3 scripts/check-selftest.py selftest.json; then
             echo "--- first nettop lines ---"; head -n 8 nettop.log
             echo "--- nettop rows for curl ---"; grep -i curl nettop.log | head -n 40

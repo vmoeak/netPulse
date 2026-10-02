@@ -7,6 +7,13 @@ import SwiftUI
 /// sidebar is a floating pane of glass with room left at its top for them.
 struct SidebarView: View {
     @ObservedObject var engine: NetworkMonitorEngine
+    /// Observed apart from the engine, whose own changes don't cover it.
+    @ObservedObject private var uploads: UploadInspector
+
+    init(engine: NetworkMonitorEngine) {
+        _engine = ObservedObject(wrappedValue: engine)
+        _uploads = ObservedObject(wrappedValue: engine.uploads)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -67,11 +74,12 @@ struct SidebarView: View {
         .frame(width: PaneWidth.sidebar)
     }
 
-    private func badgeCount(for section: SidebarSection) -> String {
+    private func badgeCount(for section: SidebarSection) -> String? {
         switch section {
         case .apps: return "\(engine.listedApps.count)"
         case .connections: return "\(engine.connectionCount)"
         case .domains: return "\(engine.domainRollups.count)"
+        case .uploads: return uploads.uploads.isEmpty ? nil : "\(uploads.uploads.count)"
         }
     }
 

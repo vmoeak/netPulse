@@ -21,4 +21,9 @@ enum Format {
         if kb > 0 && kb < 0.5 { return "<1 KB" }
         return "\(Int(kb.rounded())) KB"
     }
+
+    /// A byte count: exact under 1 KB, where a request's size matters.
+    static func bytes(_ count: Int) -> String {
+        count < 1024 ? "\(count) B" : size(Double(count) / 1024)
+    }
 }

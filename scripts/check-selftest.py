@@ -35,6 +35,8 @@ def main(path: str) -> int:
         if curl["status"] != "未运行":
             failures.append(f"curl's status line is {curl['status']!r}, expected '未运行'")
 
+    failures += check_uploads(report)
+
     ui = report.get("ui")
     if ui is not None:
         failures += check_ui(ui)
@@ -44,6 +46,24 @@ def main(path: str) -> int:
     if not failures:
         print("self-test passed")
     return 1 if failures else 0
+
+
+def check_uploads(report: dict) -> list:
+    """The upload inspector (NETPULSE_SELFTEST_INSPECTOR): CI's curl POSTs
+    a body with a git remote and branch through it to postman-echo.com."""
+    state = report.get("inspector", "off")
+    if state == "off":
+        return []
+    if not state.startswith("running"):
+        return [f"upload inspector is {state!r}, expected it running"]
+    posts = [u for u in report.get("uploads", [])
+             if u["host"] == "postman-echo.com" and u["method"] == "POST"]
+    if not posts:
+        return [f"the POST through the upload inspector wasn't recorded: {report.get('uploads')}"]
+    missing = {"gitRemote", "gitStatus"} - set(posts[0]["findings"])
+    if missing:
+        return [f"the inspected POST is missing findings {sorted(missing)}: {posts[0]}"]
+    return []
 
 
 def check_ui(ui: dict) -> list:
@@ -62,6 +82,9 @@ def check_ui(ui: dict) -> list:
         failures.append("(c) curl never showed up in 活跃连接 while it was downloading")
     if c.get("curlRowsAfter"):
         failures.append(f"(c) curl still listed in 活跃连接 after exiting: {c['curlRowsAfter']}")
+    f = ui.get("f")
+    if f is not None and f.get("uploads") and not f.get("selectedHasGit"):
+        failures.append(f"(f) 上传检查 didn't select a request with git information: {f}")
     a = ui.get("a", {})
     # A lone "▲ 12 KB/s" line is about 40pt wide; two lines plus the bars
     # are wider, but the real check is looking at a-chip.png.
