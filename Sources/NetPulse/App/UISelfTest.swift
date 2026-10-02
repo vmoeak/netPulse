@@ -25,6 +25,48 @@ enum UISelfTest {
             snapshots += snapshotMainWindows(named: name, into: outputDir)
         }
 
+        // (g) 检查上传内容 for one app, when `NETPULSE_SELFTEST_ROUTE_BUNDLE`
+        // names an installed app: the switch reopens it through the proxy,
+        // its requests are attributed to it, and switching off reopens it
+        // plainly. Off by default — it quits and opens a real app.
+        if let bundleID = ProcessInfo.processInfo.environment["NETPULSE_SELFTEST_ROUTE_BUNDLE"] {
+            let inspector = engine.uploads
+            inspector.setInspecting(true, appID: bundleID, bundleID: bundleID)
+            for _ in 0..<100 where inspector.busyAppIDs.contains(bundleID) {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            let routedPID = InspectorRouting.runningApp(bundleID: bundleID)?.processIdentifier
+            let args = routedPID.map(InspectorRouting.arguments(of:)) ?? []
+            let routedOn = inspector.isInspecting(bundleID: bundleID)
+            let messageOn = inspector.appMessages[bundleID] ?? ""
+            engine.section = .apps
+            // Long enough for the app to start up and talk to its servers.
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            engine.select(appID: bundleID)
+            snap("g1-app-inspecting")
+            let routedAtSnap = inspector.isInspecting(bundleID: bundleID)
+            let caught = inspector.uploads(forApp: bundleID)
+            inspector.setInspecting(false, appID: bundleID, bundleID: bundleID)
+            for _ in 0..<100 where inspector.busyAppIDs.contains(bundleID) {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            result["g"] = [
+                "bundleID": bundleID,
+                "routedOn": routedOn,
+                "routedAtSnap": routedAtSnap,
+                "messageOn": messageOn,
+                "launchArgs": args,
+                "caught": caught.count,
+                "caughtDecrypted": caught.filter { $0.failure == nil }.count,
+                "caughtHosts": Array(Set(caught.map(\.host))).sorted(),
+                "allUploads": inspector.uploads.count,
+                "allUploadApps": Array(Set(inspector.uploads.compactMap(\.appID))).sorted(),
+                "routedAfterOff": inspector.isInspecting(bundleID: bundleID),
+                "messageOff": inspector.appMessages[bundleID] ?? "",
+            ] as [String: Any]
+        }
+
         // (b) 打开主窗口 twice must leave one main window, not three.
         await waitUntil(3)
         let before = MainWindowOpener.shownMainWindows.count

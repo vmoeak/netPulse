@@ -11,11 +11,15 @@ struct AppInspectSwitch: View {
 
     var body: some View {
         let busy = inspector.busyAppIDs.contains(app.id)
+        let on = inspector.isInspecting(bundleID: app.bundleID)
         if InspectorRouting.canRelaunch(bundleID: app.bundleID) {
             HStack(spacing: 6) {
                 if busy { ProgressView().controlSize(.mini) }
+                if on && !busy {
+                    Text("检查中").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.accentBlue)
+                }
                 Toggle("检查上传内容", isOn: Binding(
-                    get: { inspector.isInspecting(bundleID: app.bundleID) },
+                    get: { on },
                     set: { on in
                         guard confirmRelaunch(on: on) else { return }
                         inspector.setInspecting(on, appID: app.id, bundleID: app.bundleID)

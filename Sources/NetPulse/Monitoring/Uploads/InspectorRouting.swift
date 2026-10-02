@@ -31,7 +31,11 @@ enum InspectorRouting {
     /// which can't be relaunched from here.
     static func runningApp(bundleID: String) -> NSRunningApplication? {
         guard !bundleID.hasPrefix("proc.") else { return nil }
-        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first { !$0.isTerminated }
+        // Newest live instance: right after a relaunch the old one can still
+        // be listed for a moment.
+        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { kill($0.processIdentifier, 0) == 0 }
+            .max { ($0.launchDate ?? .distantPast) < ($1.launchDate ?? .distantPast) }
     }
 
     static func canRelaunch(bundleID: String) -> Bool {
@@ -61,13 +65,23 @@ enum InspectorRouting {
             throw Failure(message: "找不到这个 App 的安装位置")
         }
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).filter { !$0.isTerminated }
+        // `isTerminated` follows workspace notifications and can lag; the
+        // pid answering signal 0 is the ground truth.
+        let pids = running.map(\.processIdentifier)
+        func anyAlive() -> Bool { pids.contains { kill($0, 0) == 0 } }
         for app in running { app.terminate() }
-        // Apps may ask to save first; give them a while.
-        for _ in 0..<150 where running.contains(where: { !$0.isTerminated }) {
+        // Apps may ask to save first; give them a while. Some (Noi, apps that
+        // live in the menu bar) ignore a polite quit altogether, so after
+        // that they are force-quit — the user already agreed to the restart.
+        for _ in 0..<80 where anyAlive() {
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        if running.contains(where: { !$0.isTerminated }) {
-            throw Failure(message: "App 没有退出（可能在等你保存），退出后再试")
+        for app in running where kill(app.processIdentifier, 0) == 0 { app.forceTerminate() }
+        for _ in 0..<50 where anyAlive() {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        if anyAlive() {
+            throw Failure(message: "App 没有退出，手动退出后再试")
         }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
