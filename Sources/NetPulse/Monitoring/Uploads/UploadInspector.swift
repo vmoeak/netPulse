@@ -176,7 +176,7 @@ final class UploadInspector: ObservableObject {
             }
         }
         let ca = self.ca, proxy = self.proxy, port = Self.preferredPort
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async {
             let result: State
             do {
                 try ca.prepare()
@@ -184,7 +184,7 @@ final class UploadInspector: ObservableObject {
             } catch {
                 result = .failed(error.localizedDescription)
             }
-            Task { @MainActor in self?.state = result }
+            Task { @MainActor in self.state = result }
         }
     }
 
@@ -202,20 +202,20 @@ final class UploadInspector: ObservableObject {
     func trustCertificate() {
         trustMessage = "正在等待 macOS 确认…"
         let ca = self.ca
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async {
             let error = ca.trustInKeychain()
             Task { @MainActor in
-                self?.trustMessage = error.map { "未能加入信任：\($0)" } ?? "已在钥匙串中信任 NetPulse 证书"
+                self.trustMessage = error.map { "未能加入信任：\($0)" } ?? "已在钥匙串中信任 NetPulse 证书"
             }
         }
     }
 
     func untrustCertificate() {
         let ca = self.ca
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async {
             let error = ca.removeKeychainTrust()
             Task { @MainActor in
-                self?.trustMessage = error.map { "未能取消信任：\($0)" } ?? "已从钥匙串移除 NetPulse 证书"
+                self.trustMessage = error.map { "未能取消信任：\($0)" } ?? "已从钥匙串移除 NetPulse 证书"
             }
         }
     }
